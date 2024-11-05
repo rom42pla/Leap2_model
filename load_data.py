@@ -16,7 +16,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a multimodal model')
-    parser.add_argument('--img_path', type=str, default="/autofs/thau00a/home/sestebanro/thau01/Multiview_Leap2_Hand_Pose_Dataset/", help='Path to the images')
+    parser.add_argument('--img_path', type=str, default="/path/to/Multiview_Leap2_Hand_Pose_Dataset/", help='Path to the images')
     parser.add_argument("--subject_id_val", type=int, default=None, help="Subject id to use as validation set")
     parser.add_argument("--subject_id_train", type=int, default=None, help="Subject id to use as training set")
     parser.add_argument("--dataframes_path", type=str, default=None, help="Path to the dataframes")
@@ -28,7 +28,6 @@ def parse_args():
 args = parse_args()
 
 init_time = datetime.datetime.now()
-group_name = datetime.datetime.now().strftime("%d-%b_%H:%M:%S")
 
 # Get the absolute path of the current directory
 root_dir = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +44,7 @@ train_users_path = os.path.join(root_dir, "data", "train_datasets")
 # Create the dataset for all the users in the train_users_path
 dfs_horizontal_viewpoints, dfs_vertical_viewpoints = create_viewpoint_dataset(train_users_path, 
                                                                               dataframes_path=args.dataframes_path, 
-                                                                              save=True)
+                                                                              save=False)
 
 # Replace the nan values with the mean of the column
 cols_with_nan_hori = dfs_horizontal_viewpoints.columns[dfs_horizontal_viewpoints.isna().any()]
@@ -74,11 +73,8 @@ if args.samples_per_pose is not None:
 
 # Get all the poses
 poses = pd.unique(dfs_horizontal_viewpoints['pose'])
-# Create a string sepated by commas of the poses
-poses_str = ', '.join(poses)
 
 # Loop over the subject_ids and take the corresponding idx as the validation set to compute a LOSO-CV
-# subject_ids = [7, 19] # Debugging
 subject_ids = dfs_horizontal_viewpoints['subject_id'].unique()
 
 if __name__ == '__main__':
