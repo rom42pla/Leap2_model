@@ -1,6 +1,8 @@
 # Leap2_dataloader
 Repository to efficiently load Leap2 data. The entire pipeline is meant to process the data using Pytorch dataloaders.
 
+## TL;DR
+`python train.py cfgs/ml2hp_fixed.yaml`
 
 ## Table of contents
 

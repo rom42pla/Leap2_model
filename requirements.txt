@@ -1,5 +1,9 @@
+pyyaml
+tqdm
 pandas
 pillow
 scikit-learn
 torch
+torchvision
+matplotlib
 opencv-python
