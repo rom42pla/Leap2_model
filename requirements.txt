@@ -1,9 +1,14 @@
 pyyaml
 tqdm
+matplotlib
+colorama
+opencv-python
 pandas
 pillow
 scikit-learn
 torch
 torchvision
-matplotlib
-opencv-python
+torchmetrics
+lightning
+transformers==4.46.3
+wandb

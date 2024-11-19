@@ -38,20 +38,33 @@ class HandPoseDataset(Dataset):
         self.dfs_vertical_viewpoints[cols_with_nan_vertical] = self.dfs_vertical_viewpoints[cols_with_nan_vertical].apply(
             lambda col: col.fillna(col.mean()), axis=0)
         
-        self.subjects_ids = sorted(self.dfs_horizontal_viewpoints["subject_id"].unique().tolist())
+        self.subject_ids = sorted(self.dfs_horizontal_viewpoints["subject_id"].unique().tolist())
+        self.num_labels = len(self.poses_dict)
+        self.num_landmarks = self.dfs_horizontal_viewpoints.iloc[:,
+                                                                 5:-2].shape[-1] + self.dfs_vertical_viewpoints.iloc[:, 5:-2].shape[-1]
         
         # preprocessing for the images
         assert isinstance(img_size, int), f"img_size must be an int, got {img_size} ({type(img_size)})"
         assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
+        self.img_channels = 1
         self.img_size = img_size
-        self.img_shape = (3, self.img_size, self.img_size)
+        self.img_shape = (1, self.img_size, self.img_size)
         self.images_transforms = T.Compose([
-            T.Resize(self.img_size),
+            T.Resize(size=self.img_size),
+            T.Grayscale(num_output_channels=1),
             T.ToTensor(),
         ])
 
     def __len__(self):
         return len(self.dfs_horizontal_viewpoints)
+    
+    def get_indices_per_subject(self):
+        indices_per_subject = {}
+        for i_row, row_subject in enumerate(self.dfs_horizontal_viewpoints["subject_id"].tolist()):
+            if row_subject not in indices_per_subject:
+                indices_per_subject[row_subject] = []
+            indices_per_subject[row_subject].append(i_row)
+        return indices_per_subject
     
     def __getitem__(self, idx):
         '''

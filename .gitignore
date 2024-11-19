@@ -2,3 +2,6 @@
 venv
 .vscode
 .conda
+wandb
+checkpoints
+*.pth

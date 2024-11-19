@@ -1,0 +1,79 @@
+import random
+from typing import List
+
+import numpy as np
+import pandas as pd
+
+import torch
+from torch.utils.data import Dataset, DataLoader, Subset
+
+
+def set_global_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+def get_device_from_string(device: str):
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    elif device in {"cuda", "gpu"}:
+        return "cuda"
+    elif device == "cpu":
+        return "cpu"
+    raise NotImplementedError(f"unrecognized device {device}")
+    
+def get_simple_runs(dataset, train_perc=0.8) -> List[List[int]]:
+    assert 0 < train_perc < 1
+    indices_shuffled = np.arange(len(dataset))
+    np.random.shuffle(indices_shuffled)
+    pivot = int(len(dataset) * train_perc)
+    runs = [{
+        "train_idx": indices_shuffled[:pivot],
+        "val_idx": indices_shuffled[pivot:]
+    }]
+    assert set(runs[-1]["train_idx"]) & set(runs[-1]["val_idx"]) == set()
+    return runs
+
+
+def get_k_fold_runs(k: int, dataset) -> List[List[int]]:
+    assert isinstance(k, int) and k > 1
+    indices_shuffled = np.arange(len(dataset))
+    np.random.shuffle(indices_shuffled)
+    folds = np.array_split(indices_shuffled, indices_or_sections=k)
+    folds = [fold.tolist() for fold in folds]
+    all_indices = np.concatenate(folds)
+    assert len(all_indices) == len(np.unique(all_indices))
+    assert np.array_equal(np.sort(all_indices), np.arange(len(dataset)))
+
+    # builds the runs dict
+    runs = []
+    for i_fold in range(len(folds)):
+        runs.append({
+            "train_idx": [i for i_fold_inner, fold in enumerate(folds) for i in fold if i_fold_inner != i_fold],
+            "val_idx": [i for i_fold_inner, fold in enumerate(folds) for i in fold if i_fold_inner == i_fold],
+        })
+        assert set(runs[-1]["train_idx"]) & set(runs[-1]["val_idx"]) == set()
+    assert len(runs) == k
+    return runs
+
+
+def get_loso_runs(dataset) -> List[List[int]]:
+    runs = []
+    indices_per_subject = dataset.get_indices_per_subject() # {1: [1, 2, 3], 2: [4, 5, 6]}
+    all_indices = [
+        i for subject in indices_per_subject 
+        for i in indices_per_subject[subject]
+        ]
+    assert len(all_indices) == len(dataset), f"{len(all_indices)} != {len(dataset)}"
+    assert sorted(all_indices) == sorted(list(range(len(dataset))))
+
+    # builds the runs dict
+    runs = []
+    for subject in indices_per_subject:
+        runs.append({
+            "train_idx": [i for subject_id_inner, indices in indices_per_subject.items() for i in indices if subject_id_inner != subject],
+            "val_idx": [i for subject_id_inner, indices in indices_per_subject.items() for i in indices if subject_id_inner == subject],
+        })
+        assert set(runs[-1]["train_idx"]) & set(runs[-1]["val_idx"]) == set()
+    assert len(runs) == len(dataset.subject_ids)
+    return runs

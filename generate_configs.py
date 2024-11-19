@@ -23,7 +23,7 @@ makedirs(line_args["path"], exist_ok=True)
 
 # defines the parameters
 datasets = ["ml2hp"]
-validations = ["fixed", "kfold", "loso"]
+validations = ["simple", "kfold", "loso"]
 
 # loops over each configuration
 for dataset, validation in itertools.product(datasets, validations):
