@@ -30,7 +30,9 @@ class Model(pl.LightningModule):
         self.h_dim = h_dim
         
         self.clip = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
+        for param in self.clip.parameters(): param.requires_grad = False;
         self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False)
+        for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): param.requires_grad = True;
         
         self.landmarks_embedder = nn.Sequential(
             nn.Linear(self.num_landmarks, 768*4),
@@ -46,6 +48,9 @@ class Model(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         return optimizer
+    
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
+        optimizer.zero_grad(set_to_none=True)
 
     @abstractmethod
     def forward(self, landmarks_horizontal, landmarks_vertical, horizontal_image, vertical_image, **kwargs):
@@ -70,6 +75,8 @@ class Model(pl.LightningModule):
 
         outs["metrics"].update({
             "cls_loss": F.cross_entropy(input=outs["cls_logits"], target=outs["cls_labels"]),
+            "cls_prec": torchmetrics.functional.precision(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
+            "cls_rec": torchmetrics.functional.recall(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
             "cls_acc": torchmetrics.functional.accuracy(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
             "cls_f1": torchmetrics.functional.f1_score(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
         })

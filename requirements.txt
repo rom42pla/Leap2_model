@@ -4,7 +4,9 @@ matplotlib
 colorama
 opencv-python
 pandas
+polars
 pillow
+pyarrow
 scikit-learn
 torch
 torchvision

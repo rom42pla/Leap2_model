@@ -21,6 +21,9 @@ from model import Model
 from utils import get_device_from_string, get_k_fold_runs, get_loso_runs, get_simple_runs, set_global_seed
 
 if __name__ == '__main__':
+    # setup
+    torch.set_float32_matmul_precision("high")
+    
     # arguments parsing
     parser = argparse.ArgumentParser(description='Train a multimodal model')
     parser.add_argument("cfg", type=str, help='Path to the configuration')
@@ -97,7 +100,7 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(
             initial_state_dict_path, weights_only=True)['model_state_dict'])
         model.to(device)
-
+       
         wandb_logger = WandbLogger(
             project="ml2hp", name=run_name, log_model=False, prefix=f"run_{i_run}")
         

@@ -12,9 +12,9 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--path", default=join(".", "cfgs"), help="Where to save the configs")
 parser.add_argument("--datasets_path", default=join("..", "..", "datasets"),
                     help="Where the datasets are located")
-parser.add_argument("--batch_size", default=32)
-parser.add_argument("--lr", default=1e-4)
-parser.add_argument("--max_epochs", default=10)
+parser.add_argument("--batch_size", default=256)
+parser.add_argument("--lr", default=5e-5)
+parser.add_argument("--max_epochs", default=3)
 parser.add_argument("--seed", default=42)
 line_args = vars(parser.parse_args())
 
