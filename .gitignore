@@ -5,4 +5,5 @@ venv
 wandb
 checkpoints
 ml2hp
+_*
 *.pth

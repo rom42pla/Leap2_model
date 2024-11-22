@@ -1,10 +1,14 @@
+from copy import deepcopy
+from pprint import pprint
 import itertools
 from multiprocessing import Pool
 import os
-from os.path import join, isdir
+from os import makedirs, listdir
+from os.path import join, isdir, exists
 import pandas as pd
 import polars as pl
 from PIL import Image
+import json
 
 import torch
 import numpy as np
@@ -15,222 +19,344 @@ from tqdm import tqdm
 
 
 class HandPoseDataset(Dataset):
-    def __init__(self,
-                 dataset_path,
-                 img_size=224):
+    def __init__(
+        self,
+        dataset_path,
+        preprocessed_landmarks_path="_preprocessed_landmarks",
+        img_size=224,
+    ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
 
         self.poses_dict = {
-            "Dislike": 0, "Three": 1, "Spiderman": 2, "Spok": 3,
-            "OK": 4, "ClosedFist": 5, "Call": 6, "L": 7,
-            "One": 8, "Rock": 9, "Four": 10, "Stop": 11,
-            "Tiger": 12, "OpenPalm": 13, "Like": 14, "C": 15, "Two": 16
+            "Dislike": 0,
+            "Three": 1,
+            "Spiderman": 2,
+            "Spok": 3,
+            "OK": 4,
+            "ClosedFist": 5,
+            "Call": 6,
+            "L": 7,
+            "One": 8,
+            "Rock": 9,
+            "Four": 10,
+            "Stop": 11,
+            "Tiger": 12,
+            "OpenPalm": 13,
+            "Like": 14,
+            "C": 15,
+            "Two": 16,
         }
 
-        # loads the viewpoints
-        self.dfs_landmarks_horizontal = pl.read_csv(
-            join(self.dataset_path, 'hand_properties_horizontal_cleaned.csv'))
-        self.dfs_landmarks_vertical = pl.read_csv(
-            join(self.dataset_path, 'hand_properties_vertical_cleaned.csv'))
-        assert self.dfs_landmarks_horizontal.shape == self.dfs_landmarks_vertical.shape
-
-        self.subject_ids = sorted(
-            self.dfs_landmarks_horizontal["subject_id"].unique().to_list())
-        self.hands = sorted(
-            self.dfs_landmarks_horizontal["which_hand"].unique().to_list())
-        self.poses = sorted(
-            self.dfs_landmarks_horizontal["pose"].unique().to_list())
-        assert set(self.poses) == set(self.poses_dict.keys()), f"there are unknown poses"
-
-        self.landmarks_columns_indices = list(
-            range(5, self.dfs_landmarks_horizontal.shape[-1] - 2))
-        self.landmarks_columns = [self.dfs_landmarks_horizontal.columns[i] for i in self.landmarks_columns_indices]
-
-        # # replace the nan values with the mean of the column
-        # for df in [self.dfs_landmarks_horizontal, self.dfs_landmarks_vertical]:
-        #     df_values_only = df[:, self.landmarks_columns_indices]
-        #     cols_with_nans = df_values_only[df_values_only.columns[df_values_only.is_nan(
-        #     ).any()]].columns
-        #     df[cols_with_nans] = df[cols_with_nans].apply(
-        #         lambda col: col.fillna(col.mean()), axis=0)
-        #     assert not df.isna().values.any(), f"there are nans in df_landmarks"
-        
-        for df in [self.dfs_landmarks_horizontal, self.dfs_landmarks_vertical]:
-            # identify columns with null values
-            nulls = df[:, self.landmarks_columns_indices].null_count()
-            cols_with_nans = [col for col in nulls.columns if nulls[col].sum() > 0]
-            for col in cols_with_nans:
-                df = df.with_columns([pl.col(col).fill_null(pl.col(col).mean()).alias(col)])
-            assert df.null_count().to_numpy().sum() == 0, \
-                "There are still NaNs in df_landmarks"
-
-        self.subject_ids = sorted(
-            self.dfs_landmarks_horizontal["subject_id"].unique().to_list())
+        self.preprocessed_landmarks_path = preprocessed_landmarks_path
+        if not exists(self.preprocessed_landmarks_path):
+            makedirs(self.preprocessed_landmarks_path)
+            df_landmarks_raw = self.load_raw_landmarks(
+                csv_horizontal_path=join(
+                    self.dataset_path, "hand_properties_horizontal_cleaned.csv"
+                ),
+                csv_vertical_path=join(
+                    self.dataset_path, "hand_properties_vertical_cleaned.csv"
+                ),
+            )
+            # retrieves the columns indices with actual values from landmarks
+            self.landmarks_columns_indices = list(
+                range(5, df_landmarks_raw.shape[-1] - 2)
+            )
+            # fills the missing values in the landmarks
+            df_landmarks_raw = self.fill_nans(
+                df=df_landmarks_raw,
+                landmarks_columns_indices=self.landmarks_columns_indices,
+            )
+            # standardize and normalize the landmarks
+            self.df_landmarks_prep = self.preprocess_landmarks(
+                df=df_landmarks_raw,
+                landmarks_columns_indices=self.landmarks_columns_indices,
+            )
+            del df_landmarks_raw
+            self.save_landmarks_data_on_disk(
+                self.df_landmarks_prep, self.preprocessed_landmarks_path
+            )
+        # loads the infos for each sample
+        self.samples = self.parse_samples(
+            dataset_path=self.dataset_path,
+            preprocessed_landmarks_path=self.preprocessed_landmarks_path,
+            poses_dict=self.poses_dict,
+        )
+        self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_landmarks = self.dfs_landmarks_horizontal[:, 5:-2].shape[-1] + self.dfs_landmarks_vertical[:, 5:-2].shape[-1]
-        self.hands = sorted(
-            self.dfs_landmarks_horizontal["which_hand"].unique().to_list())
-        
-        # Loop through horizontal and vertical landmarks
-        for df in [self.dfs_landmarks_horizontal, self.dfs_landmarks_vertical]:
-            df = df.to_pandas(use_pyarrow_extension_array=False)
-            for subject, hand, pose in tqdm(
-                list(itertools.product(self.subject_ids, self.hands, self.poses)),
-                desc="Normalizing data"
-            ):
-                mask = (df["subject_id"] == subject) & (
-                    df["which_hand"] == hand) & (
-                    df["pose"] == pose)
-                mask_indices = mask[mask].index
+        self.num_landmarks = len(self.samples[0]["landmarks_horizontal"]) + len(
+            self.samples[0]["landmarks_vertical"]
+        )
 
-                data = df.iloc[mask_indices, self.landmarks_columns_indices]   
-
-                # standardize to zero mean and unit variance
-                means, stds = data.mean(axis=0), data.std(axis=0)
-                standardized_data = (data - means) / (stds + 1e-7)
-                
-                # normalize values between -1 and 1
-                mins, maxs = standardized_data.min(axis=0), standardized_data.max(axis=0)
-                normalized_data = 2 * \
-                    (standardized_data - mins) / (maxs - mins) - 1
-                    
-                # assign the new data
-                df.loc[mask, self.landmarks_columns] = normalized_data
-                
-                    
-                
-                    
-                
-                
         # preprocessing for the images
         assert isinstance(
-            img_size, int), f"img_size must be an int, got {img_size} ({type(img_size)})"
+            img_size, int
+        ), f"img_size must be an int, got {img_size} ({type(img_size)})"
         assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
         self.img_channels = 1
         self.img_size = img_size
         self.img_shape = (1, self.img_size, self.img_size)
-        self.images_transforms = T.Compose([
-            T.Resize(size=self.img_size),
-            T.Grayscale(num_output_channels=1),
-            T.ToTensor(),
-        ])
+        self.images_transforms = T.Compose(
+            [
+                T.Resize(size=self.img_size),
+                T.Grayscale(num_output_channels=1),
+                T.ToTensor(),
+            ]
+        )
 
     def __len__(self):
-        return len(self.dfs_landmarks_horizontal)
+        return len(self.samples)
 
     @staticmethod
-    def normalize_landmarks(args):
-        """Function to normalize landmarks for a specific subject and hand."""
-        subject, hand, landmarks_columns, dfs = args
-        dfs_normalized = []
+    def load_raw_landmarks(csv_horizontal_path, csv_vertical_path):
+        columns_to_drop = ["image_path"]
+        # loads the viewpoints using polars, which is way faster than pandas
+        df_landmarks_horizontal = pl.read_csv(csv_horizontal_path).drop(columns_to_drop)
+        df_landmarks_vertical = pl.read_csv(csv_vertical_path).drop(columns_to_drop)
+        assert (
+            df_landmarks_horizontal.shape == df_landmarks_vertical.shape
+        ), f"df_landmarks_horizontal.shape != df_landmarks_vertical.shape"
+        # concatenate the two dataframes. the 'device' column keeps track of which landmarks come from which device
+        df_landmarks = pl.concat(
+            [df_landmarks_horizontal, df_landmarks_vertical], how="vertical"
+        )
+        assert tuple(df_landmarks.shape) == (
+            df_landmarks_horizontal.shape[0] + df_landmarks_vertical.shape[0],
+            df_landmarks_horizontal.shape[1],
+        ), f"{df_landmarks.shape} != [{df_landmarks_horizontal.shape[0] + df_landmarks_vertical.shape[0]}, {df_landmarks_horizontal.shape[1]}]"
+        # and back to pandas
+        df_landmarks = df_landmarks.to_pandas(use_pyarrow_extension_array=False)
+        return df_landmarks
 
-        for df in dfs:
-            mask = (df["subject_id"] == subject) & (df["which_hand"] == hand)
+    @staticmethod
+    def load_preprocessed_landmarks(csv_path):
+        # loads the viewpoints using polars, which is way faster than pandas
+        df = pl.read_csv(csv_path).to_pandas(use_pyarrow_extension_array=False)
+        # builds the dictionary
+        samples = []
+        for row in tqdm(
+            pl.from_pandas(df).iter_rows(named=True),
+            desc="Building the json",
+            total=len(df),
+        ):
+            samples.append(
+                {
+                    "frame_id": row["frame_id"],
+                    "subject_id": row["subject_id"],
+                    "which_hand": row["which_hand"],
+                    "pose": row["pose"],
+                    "landmarks_horizontal": [
+                        row[col] for col in df.columns if col.endswith("_horizontal")
+                    ],
+                    "landmarks_vertical": [
+                        row[col] for col in df.columns if col.endswith("_vertical")
+                    ],
+                }
+            )
+        return df
 
-            # Standardize to zero mean and unit variance
-            stats = df.loc[mask, landmarks_columns].agg(["mean", "std"])
-            means, stds = stats.loc["mean"], stats.loc["std"]
-            assert all(len(stat) == df.loc[mask, landmarks_columns].shape[1] for stat in [means, stds]), \
-                f"Statistics mismatch for subject {subject}, hand {hand}"
-            df.loc[mask, landmarks_columns] = (
-                df.loc[mask, landmarks_columns] - means) / stds
+    @staticmethod
+    def fill_nans(df, landmarks_columns_indices):
+        df_values_only = df.iloc[:, landmarks_columns_indices]
+        cols_with_nans = df_values_only[
+            df_values_only.columns[df_values_only.isna().any()]
+        ].columns
+        for col in cols_with_nans:
+            df[col] = df[col].fillna(df[col].mean())
+            assert not df[col].isna().any(), f"there are nans in {col}"
+        return df
 
-            # Normalize values between -1 and 1
-            stats = df.loc[mask, landmarks_columns].agg(["min", "max"])
-            mins, maxs = stats.loc["min"], stats.loc["max"]
-            assert all(len(stats) == df.loc[mask, landmarks_columns].shape[1] for stats in [mins, maxs]), \
-                f"Statistics mismatch for subject {subject}, hand {hand}"
-            df.loc[mask, landmarks_columns] = (
-                2 * (df.loc[mask, landmarks_columns] - mins) / (maxs - mins)) - 1
+    @staticmethod
+    def preprocess_landmarks(df, landmarks_columns_indices):
+        subject_ids, hands, poses, devices = [
+            df[col].unique().tolist()
+            for col in ["subject_id", "which_hand", "pose", "device"]
+        ]
 
-            dfs_normalized.append(df)
+        df_values = df.values
+        for subject_id, hand, pose, device in tqdm(
+            list(itertools.product(subject_ids, hands, poses, devices)),
+            desc="Preprocessing data",
+        ):
+            # builds a mask of the rowss that match the current subject, hand, pose, and device
+            mask = (
+                (df["subject_id"].values == subject_id)
+                & (df["which_hand"].values == hand)
+                & (df["pose"].values == pose)
+                & (df["device"].values == device)
+            )
+            mask_indices = np.where(mask)[0]
+            # mask_indices = mask[mask].index
 
-        return dfs_normalized
+            data = df_values[np.ix_(mask_indices, landmarks_columns_indices)].astype(
+                np.float32
+            )
+            # data = df.iloc[mask_indices, landmarks_columns_indices]
+
+            # standardize to zero mean and unit variance
+            means, stds = data.mean(axis=0), data.std(axis=0)
+            standardized_data = (data - means) / (stds + 1e-7)
+
+            # normalize values between -1 and 1
+            mins, maxs = standardized_data.min(axis=0), standardized_data.max(axis=0)
+            normalized_data = (
+                2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
+            )
+
+            # assign the new data
+            # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
+            df_values[np.ix_(mask_indices, landmarks_columns_indices)] = normalized_data
+
+        df_prep = pd.DataFrame(df_values, columns=df.columns)
+
+        # splits the df into horizontal and vertical ones, based on the device used
+        df_horizontal = df_prep[df_prep["device"] == "Horizontal"]
+        df_vertical = df_prep[df_prep["device"] == "Vertical"]
+        assert (
+            df_horizontal.shape == df_vertical.shape
+        ), f"{df_horizontal.shape} != {df_vertical.shape}"
+
+        # merge the two dataframes in a single one
+        id_cols = ["frame_id", "subject_id", "which_hand", "pose"]
+        df = pd.merge(
+            left=df_horizontal,
+            right=df_vertical,
+            how="inner",
+            on=id_cols,
+            suffixes=("_horizontal", "_vertical"),
+        )
+        assert (
+            df.shape[0] == df_horizontal.shape[0]
+        ), f"{df.shape} != {df_horizontal.shape}"
+        assert all(
+            [col in df.columns for col in id_cols]
+        ), f"{id_cols} not in {df.columns}"
+        df = df.reset_index().drop(
+            columns=[
+                col
+                for col in df.columns
+                if col.startswith("device") or col.startswith("pose_index")
+            ]
+        )
+
+        return df
+
+    @staticmethod
+    def save_landmarks_data_on_disk(df, path):
+        for row in tqdm(
+            pl.from_pandas(df).iter_rows(named=True),
+            desc=f"Saving preprocessed landmarks to {path}",
+            total=len(df),
+        ):
+            # parses all the metas
+            frame_id, subject_id, hand, pose = [
+                str(row[col])
+                for col in ["frame_id", "subject_id", "which_hand", "pose"]
+            ]
+            landmarks_path = join(path, subject_id.zfill(3), hand, pose)
+            # eventually creates the folder
+            for device in ["Horizontal", "Vertical"]:
+                # retrieves the landmarks from the big dataframe
+                arr_landmarks = np.asarray(
+                    [
+                        row[col]
+                        for col in df.columns
+                        if col.endswith(f"_{device.lower()}")
+                    ]
+                )
+                # saves the landmarks to disk
+                landmarks_per_device_path = join(landmarks_path, device, "landmarks")
+                if not isdir(landmarks_per_device_path):
+                    os.makedirs(landmarks_per_device_path)
+                np.save(
+                    join(landmarks_per_device_path, f"{frame_id.zfill(3)}.npy"),
+                    arr_landmarks,
+                )
+
+    @staticmethod
+    def parse_samples(dataset_path, preprocessed_landmarks_path, poses_dict=None):
+        samples = []
+        subject_ids = [f for f in listdir(dataset_path) if isdir(join(dataset_path, f))]
+        hands = listdir(join(dataset_path, subject_ids[0]))
+        poses = listdir(join(dataset_path, subject_ids[0], hands[0]))
+        frame_ids = [
+            filename.split("_")[0].zfill(3)
+            for filename in listdir(
+                join(
+                    dataset_path,
+                    subject_ids[0],
+                    hands[0],
+                    poses[0],
+                    "Horizontal",
+                    "images",
+                )
+            )
+        ]
+        for subject_id, hand, pose, frame_id in tqdm(
+            list(itertools.product(subject_ids, hands, poses, frame_ids)),
+            desc=f"Parsing samples",
+        ):
+            if poses_dict is not None:
+                if pose not in poses_dict:
+                    raise BaseException(
+                        f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
+                    )
+            # parses the sample
+            sample = {
+                "subject_id": subject_id,
+                "hand": hand,
+                "pose": pose,
+            }
+            for device in ["Horizontal", "Vertical"]:
+                # parses the landmarks
+                sample[f"landmarks_{device.lower()}"] = join(
+                    preprocessed_landmarks_path,
+                    subject_id,
+                    hand,
+                    pose,
+                    device,
+                    "landmarks",
+                    f"{frame_id}.npy",
+                )
+                assert exists(
+                    sample[f"landmarks_{device.lower()}"]
+                ), f"{sample[f'landmarks_{device.lower()}']} does not exist"
+                # parses the images
+                for direction in ["left", "right"]:
+                    sample[f"image_{device.lower()}_{direction}"] = join(
+                        dataset_path,
+                        subject_id,
+                        hand,
+                        pose,
+                        device,
+                        "images",
+                        f"{frame_id}_{direction}.bmp",
+                    )
+                    assert exists(
+                        sample[f"image_{device.lower()}_{direction}"]
+                    ), f"{sample[f'image_{device.lower()}_{direction}']} does not exist"
+            samples.append(sample)
+        return samples
 
     def get_indices_per_subject(self):
         indices_per_subject = {}
-        for i_row, row_subject in enumerate(self.dfs_landmarks_horizontal["subject_id"].tolist()):
+        for i_row, row_subject in enumerate(
+            self.dfs_landmarks_horizontal["subject_id"].tolist()
+        ):
             if row_subject not in indices_per_subject:
                 indices_per_subject[row_subject] = []
             indices_per_subject[row_subject].append(i_row)
         return indices_per_subject
 
     def __getitem__(self, idx):
-        '''
-        Function to get the item at the idx position
-        '''
-        # Take the landmarks which from the column number 5 up to the last two
-        landmarks_horizontal = torch.tensor(
-            self.dfs_landmarks_horizontal.iloc[idx, 5:-2].values.astype(float))
-        landmarks_vertical = torch.tensor(
-            self.dfs_landmarks_vertical.iloc[idx, 5:-2].values.astype(float))
-        # Take the sample from the dataframes
-        sample_horizontal = self.dfs_landmarks_horizontal.iloc[idx]
-        sample_vertical = self.dfs_landmarks_vertical.iloc[idx]
-
-        # Take the subject_id from the dataframes
-        subject_id_horizontal = sample_horizontal['subject_id']
-        subject_id_vertical = sample_vertical['subject_id']
-
-        # Check that is the same subject and then put subj_id in the form "0XX" being XX the number of the subject
-        if subject_id_horizontal != subject_id_vertical:
-            raise ValueError(
-                f"Subject ID {subject_id_horizontal} and {subject_id_vertical} do not match")
-        subject_id = f"{subject_id_horizontal:03}"
-
-        # Check that the pose is the same
-        if sample_horizontal['pose'] != sample_vertical['pose']:
-            raise ValueError(
-                f"Pose {sample_horizontal['pose']} and {sample_vertical['pose']} do not match")
-
-        # Check that the hand is the same
-        if sample_horizontal['which_hand'] != sample_vertical['which_hand']:
-            raise ValueError(
-                f"Hand {sample_horizontal['which_hand']} and {sample_vertical['which_hand']} do not match")
-
-        # Check that the frame_id is the same
-        if sample_horizontal['frame_id'] != sample_vertical['frame_id']:
-            raise ValueError(
-                f"Frame ID {sample_horizontal['frame_id']} and {sample_vertical['frame_id']} do not match")
-
-        # Take the pose
-        pose = sample_horizontal['pose']
-
-        # Take the frame_id and put it in the form "0XX" being XX the number of the frame_id considering it can go up to 1000
-        frame_id = f"{sample_horizontal['frame_id']:03}"
-
-        # Take the label amd which hand is being used
-        hand = sample_horizontal['which_hand']
-        label = sample_horizontal['pose_index']
-
-        # Load the images for the horizontal and vertical viewpoints that matches the sample and convert them to RGB
-        horizontal_image = Image.open(os.path.join(
-            self.dataset_path, f"{subject_id_horizontal:03}", hand, pose, 'Horizontal', 'images', f"{frame_id}_left.bmp")).convert('RGB')
-        vertical_image = Image.open(os.path.join(
-            self.dataset_path, f"{subject_id_vertical:03}", hand, pose, 'Vertical', 'images', f"{frame_id}_left.bmp")).convert('RGB')
-
-        horizontal_image = self.images_transforms(horizontal_image)
-        vertical_image = self.images_transforms(vertical_image)
-
-        assert tuple(
-            horizontal_image.shape) == self.img_shape, f"expected shape {self.img_shape}, got {horizontal_image.shape}"
-        assert tuple(
-            vertical_image.shape) == self.img_shape, f"expected shape {self.img_shape}, got {vertical_image.shape}"
-        # return landmarks_horizontal, landmarks_vertical, horizontal_image, vertical_image, subject_id, hand, pose, frame_id, label
-
-        outs = {
-            "landmarks_horizontal": landmarks_horizontal,
-            "landmarks_vertical": landmarks_vertical,
-            "horizontal_image": horizontal_image,
-            "vertical_image": vertical_image,
-            "subject_id": subject_id,
-            "hand": hand,
-            "pose": pose,
-            "frame_id": frame_id,
-            "label": label,
-        }
-        return outs
+        sample = deepcopy(self.samples[idx])
+        for key in sample:
+            if key.startswith("image"):
+                sample[key] = self.images_transforms(Image.open(sample[key]))
+            elif key.startswith("landmarks"):
+                sample[key] = torch.from_numpy(np.load(sample[key])).float()
+        return sample
 
 
 if __name__ == "__main__":
@@ -238,4 +364,5 @@ if __name__ == "__main__":
     for k, v in dataset[0].items():
         if isinstance(v, torch.Tensor):
             print(
-                f"key {k} with shape {tuple(v.shape)} has: min {v.min()}, max {v.max()}, mean {v.mean()}, std {v.std()}")
+                f"key {k} with shape {tuple(v.shape)} has: min {v.min()}, max {v.max()}, mean {v.mean()}, std {v.std()}"
+            )
