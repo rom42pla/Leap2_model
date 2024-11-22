@@ -19,7 +19,7 @@ class Model(pl.LightningModule):
                  lr: float = 5e-5):
         super(Model, self).__init__()
         self.save_hyperparameters()
-        
+
         self.num_classes = num_labels
         self.num_landmarks = num_landmarks
         self.img_channels = img_channels
@@ -28,12 +28,12 @@ class Model(pl.LightningModule):
         # model params
         assert isinstance(h_dim, int) and h_dim > 0, h_dim
         self.h_dim = h_dim
-        
+
         self.clip = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
         for param in self.clip.parameters(): param.requires_grad = False;
         self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False)
         for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): param.requires_grad = True;
-        
+
         self.landmarks_embedder = nn.Sequential(
             nn.Linear(self.num_landmarks, 768*4),
             nn.LeakyReLU(),
@@ -48,19 +48,19 @@ class Model(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         return optimizer
-    
+
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
         optimizer.zero_grad(set_to_none=True)
 
     @abstractmethod
-    def forward(self, landmarks_horizontal, landmarks_vertical, horizontal_image, vertical_image, **kwargs):
+    def forward(self, landmarks_horizontal, landmarks_vertical, image_horizontal_left, image_vertical_left, **kwargs):
         outs = {}
-        imgs = torch.cat([horizontal_image, vertical_image], dim=1).float()
+        imgs = torch.cat([image_horizontal_left, image_vertical_left], dim=1).float()
         landmarks = torch.cat([landmarks_horizontal, landmarks_vertical], dim=1).float()
-        
+
         outs["imgs_embs"] = self.clip(pixel_values=imgs).pooler_output
         outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
-        
+
         outs["cls_logits"] = self.cls_head(
             torch.cat([outs["imgs_embs"], outs["landmarks_embs"]], dim=1)
         )
@@ -80,7 +80,6 @@ class Model(pl.LightningModule):
             "cls_acc": torchmetrics.functional.accuracy(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
             "cls_f1": torchmetrics.functional.f1_score(preds=outs["cls_logits"], target=outs["cls_labels"], task="multiclass", num_classes=self.num_classes, average="micro"),
         })
-
 
         # computes final loss
         outs["loss"] = sum(

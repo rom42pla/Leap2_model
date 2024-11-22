@@ -1,4 +1,4 @@
-batch_size: 256
+batch_size: 128
 checkpoints_path: ./checkpoints
 dataset: ml2hp
 dataset_path: ../../datasets/ml2hp

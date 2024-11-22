@@ -1,7 +1,6 @@
 from copy import deepcopy
 from pprint import pprint
 import itertools
-from multiprocessing import Pool
 import os
 from os import makedirs, listdir
 from os.path import join, isdir, exists
@@ -23,10 +22,13 @@ class HandPoseDataset(Dataset):
         self,
         dataset_path,
         preprocessed_landmarks_path="_preprocessed_landmarks",
+        images_needed="left",
         img_size=224,
     ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
+        assert images_needed in ["left", "right", "both"]
+        self.images_needed = images_needed
 
         self.poses_dict = {
             "Dislike": 0,
@@ -73,7 +75,7 @@ class HandPoseDataset(Dataset):
                 df=df_landmarks_raw,
                 landmarks_columns_indices=self.landmarks_columns_indices,
             )
-            del df_landmarks_raw
+            # save the preprocessed landmarks on disk
             self.save_landmarks_data_on_disk(
                 self.df_landmarks_prep, self.preprocessed_landmarks_path
             )
@@ -85,9 +87,7 @@ class HandPoseDataset(Dataset):
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_landmarks = len(self.samples[0]["landmarks_horizontal"]) + len(
-            self.samples[0]["landmarks_vertical"]
-        )
+        self.num_landmarks = np.load(self.samples[0]["landmarks_horizontal"]).size + np.load(self.samples[0]["landmarks_vertical"]).size
 
         # preprocessing for the images
         assert isinstance(
@@ -158,13 +158,13 @@ class HandPoseDataset(Dataset):
 
     @staticmethod
     def fill_nans(df, landmarks_columns_indices):
-        df_values_only = df.iloc[:, landmarks_columns_indices]
-        cols_with_nans = df_values_only[
-            df_values_only.columns[df_values_only.isna().any()]
-        ].columns
+        cols_with_nans = df[df.columns[df.isna().any()]].columns
         for col in cols_with_nans:
-            df[col] = df[col].fillna(df[col].mean())
-            assert not df[col].isna().any(), f"there are nans in {col}"
+            mean = df.loc[:, col].mean()
+            assert not np.isnan(mean), f"mean is nan for {col}"
+            df.loc[:, col] = df.loc[:, col].fillna(mean)
+            assert not df.loc[:, col].isnull().values.any(), f"there are nans in {col}"
+        assert not df.isnull().values.any(), f"there are nans"
         return df
 
     @staticmethod
@@ -203,6 +203,7 @@ class HandPoseDataset(Dataset):
             normalized_data = (
                 2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
             )
+            assert not np.isnan(normalized_data).any(), f"there are nans in {subject_id}, {hand}, {pose}, {device}"
 
             # assign the new data
             # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
@@ -260,11 +261,11 @@ class HandPoseDataset(Dataset):
                 # retrieves the landmarks from the big dataframe
                 arr_landmarks = np.asarray(
                     [
-                        row[col]
+                        float(row[col])
                         for col in df.columns
                         if col.endswith(f"_{device.lower()}")
                     ]
-                )
+                ).astype(np.float32)
                 # saves the landmarks to disk
                 landmarks_per_device_path = join(landmarks_path, device, "landmarks")
                 if not isdir(landmarks_per_device_path):
@@ -297,17 +298,18 @@ class HandPoseDataset(Dataset):
             list(itertools.product(subject_ids, hands, poses, frame_ids)),
             desc=f"Parsing samples",
         ):
-            if poses_dict is not None:
-                if pose not in poses_dict:
-                    raise BaseException(
-                        f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
-                    )
             # parses the sample
             sample = {
                 "subject_id": subject_id,
                 "hand": hand,
                 "pose": pose,
             }
+            if poses_dict is not None:
+                if pose not in poses_dict:
+                    raise BaseException(
+                        f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
+                    )
+                sample["label"] = poses_dict[pose]
             for device in ["Horizontal", "Vertical"]:
                 # parses the landmarks
                 sample[f"landmarks_{device.lower()}"] = join(
@@ -341,21 +343,24 @@ class HandPoseDataset(Dataset):
 
     def get_indices_per_subject(self):
         indices_per_subject = {}
-        for i_row, row_subject in enumerate(
-            self.dfs_landmarks_horizontal["subject_id"].tolist()
-        ):
-            if row_subject not in indices_per_subject:
-                indices_per_subject[row_subject] = []
-            indices_per_subject[row_subject].append(i_row)
+        for i_sample, sample in enumerate(self.samples):
+            subject_id = sample["subject_id"]
+            if subject_id not in indices_per_subject:
+                indices_per_subject[subject_id] = []
+            indices_per_subject[subject_id].append(i_sample)
         return indices_per_subject
 
     def __getitem__(self, idx):
         sample = deepcopy(self.samples[idx])
         for key in sample:
             if key.startswith("image"):
+                if key.endswith("left") and self.images_needed == "right":
+                    continue
+                elif key.endswith("right") and self.images_needed == "left":
+                    continue
                 sample[key] = self.images_transforms(Image.open(sample[key]))
             elif key.startswith("landmarks"):
-                sample[key] = torch.from_numpy(np.load(sample[key])).float()
+                sample[key] = torch.from_numpy(np.load(sample[key], allow_pickle=True)).float()
         return sample
 
 

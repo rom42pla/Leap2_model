@@ -89,11 +89,13 @@ if __name__ == '__main__':
         dataloader_train = DataLoader(
             dataset=Subset(dataset, indices=run["train_idx"]),
             batch_size=cfg["batch_size"],
-            shuffle=True, pin_memory=True, num_workers=num_workers)
+            shuffle=True, pin_memory=True, num_workers=num_workers,
+            persistent_workers=True)
         dataloader_val = DataLoader(
             dataset=Subset(dataset, indices=run["val_idx"]),
             batch_size=cfg["batch_size"],
-            shuffle=False, pin_memory=True, num_workers=num_workers)
+            shuffle=False, pin_memory=True, num_workers=num_workers / 2,
+            persistent_workers=True)
 
         # initialize the model
         model.to("cpu")
@@ -107,7 +109,7 @@ if __name__ == '__main__':
         # do the training
         trainer = Trainer(logger=wandb_logger, accelerator=device,
                           precision="16-mixed", max_epochs=cfg["max_epochs"],
-                          enable_model_summary=True)
+                          enable_model_summary=True, val_check_interval=0.25)
         trainer.fit(model, dataloader_train, dataloader_val)
     wandb.finish()
 
