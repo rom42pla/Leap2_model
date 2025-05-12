@@ -87,7 +87,7 @@ class Model(pl.LightningModule):
 
         # logs metrics
         for metric_name, metric_value in outs["metrics"].items():
-            self.log(name=f"{metric_name}/{phase}", value=metric_value,
+            self.log(name=f"{metric_name}_{phase}", value=metric_value,
                      prog_bar=any([metric_name.endswith(s)
                                   for s in {"f1"}]),
                      on_step=False, on_epoch=True, batch_size=batch["label"].shape[0])

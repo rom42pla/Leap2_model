@@ -39,7 +39,7 @@ if __name__ == '__main__':
     set_global_seed(seed=cfg["seed"])
     
     # sets the logging folder
-    datetime_str: str = datetime.now().strftime("%Y%m%d_%H:%M")
+    datetime_str: str = datetime.now().strftime("%Y%m%d_%H%M")
     experiment_name: str = f"{datetime_str}_{cfg['dataset']}"
     experiment_path: str = join(cfg['checkpoints_path'], experiment_name)
     makedirs(experiment_path, exist_ok=True)
@@ -84,6 +84,8 @@ if __name__ == '__main__':
     # loops over runs
     for i_run, run in enumerate(runs):
         print(f"doing run {i_run+1} of {len(runs)} ({((i_run+1)/len(runs)) * 100:.1f}%)")
+        experiment_run_path = join(experiment_path, f"run_{i_run}")
+        makedirs(experiment_run_path, exist_ok=True)
 
         # splits the dataset
         dataloader_train = DataLoader(
@@ -107,9 +109,19 @@ if __name__ == '__main__':
             project="ml2hp", name=run_name, log_model=False, prefix=f"run_{i_run}")
         
         # do the training
+        from lightning.pytorch.callbacks import ModelCheckpoint
         trainer = Trainer(logger=wandb_logger, accelerator=device,
                           precision="16-mixed", max_epochs=cfg["max_epochs"],
-                          enable_model_summary=True, val_check_interval=0.25)
+                          enable_model_summary=True, val_check_interval=0.25,
+                          enable_checkpointing=True, default_root_dir=experiment_run_path,
+                          callbacks=[
+                              ModelCheckpoint(
+                                dirpath=experiment_run_path,
+                                filename='{epoch:01d}-{cls_f1_loss:.4f}-{cls_f1_val:.4f}',
+                                monitor=f"cls_f1_val",
+                                every_n_epochs=1,
+                              )
+                          ])
         trainer.fit(model, dataloader_train, dataloader_val)
     wandb.finish()
 
