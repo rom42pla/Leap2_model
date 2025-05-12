@@ -22,7 +22,7 @@ from utils import get_device_from_string, get_k_fold_runs, get_loso_runs, get_si
 
 if __name__ == '__main__':
     # setup
-    torch.set_float32_matmul_precision("high")
+    torch.set_float32_matmul_precision("medium")
     
     # arguments parsing
     parser = argparse.ArgumentParser(description='Train a multimodal model')
@@ -48,7 +48,7 @@ if __name__ == '__main__':
     dataset = HandPoseDataset(
         dataset_path=cfg["dataset_path"],
     )
-    
+
     # sets up the validation scheme
     if cfg['validation'] in ["k_fold", "kfold"]:
         raise NotImplementedError
@@ -94,7 +94,7 @@ if __name__ == '__main__':
         dataloader_val = DataLoader(
             dataset=Subset(dataset, indices=run["val_idx"]),
             batch_size=cfg["batch_size"],
-            shuffle=False, pin_memory=True, num_workers=num_workers / 2,
+            shuffle=False, pin_memory=True, num_workers=num_workers // 2,
             persistent_workers=True)
 
         # initialize the model

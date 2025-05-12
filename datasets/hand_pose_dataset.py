@@ -84,6 +84,7 @@ class HandPoseDataset(Dataset):
             dataset_path=self.dataset_path,
             preprocessed_landmarks_path=self.preprocessed_landmarks_path,
             poses_dict=self.poses_dict,
+            images_needed=self.images_needed,
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
@@ -276,7 +277,8 @@ class HandPoseDataset(Dataset):
                 )
 
     @staticmethod
-    def parse_samples(dataset_path, preprocessed_landmarks_path, poses_dict=None):
+    def parse_samples(dataset_path, preprocessed_landmarks_path, images_needed="both", poses_dict=None):
+        assert images_needed in {"left", "right", "both"}, f"got {images_needed}"
         samples = []
         subject_ids = [f for f in listdir(dataset_path) if isdir(join(dataset_path, f))]
         hands = listdir(join(dataset_path, subject_ids[0]))
@@ -298,6 +300,10 @@ class HandPoseDataset(Dataset):
             list(itertools.product(subject_ids, hands, poses, frame_ids)),
             desc=f"Parsing samples",
         ):
+            if hand == "Left_Hand" and images_needed == "right":
+                continue
+            elif hand == "Right_Hand" and images_needed == "left":
+                continue
             # parses the sample
             sample = {
                 "subject_id": subject_id,
