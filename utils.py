@@ -5,8 +5,14 @@ import numpy as np
 import pandas as pd
 
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset
 
+def find_samples_of_subject(dataset, subject_id):
+    indices = []
+    for i_sample, sample in enumerate(dataset.samples):
+        if sample["subject_id"] == subject_id:
+            indices.append(i_sample)
+    assert all([dataset.samples[i]["subject_id"] == subject_id for i in indices])
+    return indices
 
 def set_global_seed(seed: int):
     random.seed(seed)
@@ -58,7 +64,6 @@ def get_k_fold_runs(k: int, dataset) -> List[List[int]]:
 
 
 def get_loso_runs(dataset) -> List[List[int]]:
-    runs = []
     indices_per_subject = dataset.get_indices_per_subject() # {1: [1, 2, 3], 2: [4, 5, 6]}
     all_indices = [
         i for subject in indices_per_subject 
@@ -71,6 +76,7 @@ def get_loso_runs(dataset) -> List[List[int]]:
     runs = []
     for subject in indices_per_subject:
         runs.append({
+            "subject_id": str(subject).zfill(3),
             "train_idx": [i for subject_id_inner, indices in indices_per_subject.items() for i in indices if subject_id_inner != subject],
             "val_idx": [i for subject_id_inner, indices in indices_per_subject.items() for i in indices if subject_id_inner == subject],
         })

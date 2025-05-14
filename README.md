@@ -4,6 +4,11 @@ Repository to efficiently load Leap2 data. The entire pipeline is meant to proce
 ## TL;DR
 `python train.py cfgs/ml2hp_fixed.yaml`
 
+## Pre-processing
+
+If it does not already exist, a folder `_preprocessed_dataset` inside the current directory is created.
+This folder will contain the preprocessed landmarks, for faster use during training/inference.
+
 ## Pre-requisites
 
 ### Dependencies

@@ -24,11 +24,13 @@ class HandPoseDataset(Dataset):
         preprocessed_landmarks_path="_preprocessed_landmarks",
         images_needed="left",
         img_size=224,
+        normalize_landmarks=True,
     ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
         assert images_needed in ["left", "right", "both"]
         self.images_needed = images_needed
+        self.normalize_landmarks = True
 
         self.poses_dict = {
             "Dislike": 0,
@@ -50,9 +52,10 @@ class HandPoseDataset(Dataset):
             "Two": 16,
         }
 
-        self.preprocessed_landmarks_path = preprocessed_landmarks_path
-        if not exists(self.preprocessed_landmarks_path):
-            makedirs(self.preprocessed_landmarks_path)
+        self.preprocessed_dataset_path = preprocessed_landmarks_path
+        if not exists(self.preprocessed_dataset_path):
+            makedirs(self.preprocessed_dataset_path)
+            # parses the cleaned landmarks
             df_landmarks_raw = self.load_raw_landmarks(
                 csv_horizontal_path=join(
                     self.dataset_path, "hand_properties_horizontal_cleaned.csv"
@@ -71,24 +74,32 @@ class HandPoseDataset(Dataset):
                 landmarks_columns_indices=self.landmarks_columns_indices,
             )
             # standardize and normalize the landmarks
-            self.df_landmarks_prep = self.preprocess_landmarks(
-                df=df_landmarks_raw,
-                landmarks_columns_indices=self.landmarks_columns_indices,
-            )
+            if self.normalize_landmarks:
+                self.df_landmarks_prep = self.preprocess_landmarks(
+                    df=df_landmarks_raw,
+                    landmarks_columns_indices=self.landmarks_columns_indices,
+                )
             # save the preprocessed landmarks on disk
             self.save_landmarks_data_on_disk(
-                self.df_landmarks_prep, self.preprocessed_landmarks_path
+                self.df_landmarks_prep, self.dataset_path, self.preprocessed_dataset_path
             )
+            # self.save_compressed_images_on_disk(
+            #     self.df_landmarks_prep, self.preprocessed_dataset_path
+            # )
+        
         # loads the infos for each sample
         self.samples = self.parse_samples(
             dataset_path=self.dataset_path,
-            preprocessed_landmarks_path=self.preprocessed_landmarks_path,
+            preprocessed_landmarks_path=self.preprocessed_dataset_path,
             poses_dict=self.poses_dict,
             images_needed=self.images_needed,
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_landmarks = np.load(self.samples[0]["landmarks_horizontal"]).size + np.load(self.samples[0]["landmarks_vertical"]).size
+        self.num_landmarks = (
+            np.load(self.samples[0]["landmarks_horizontal"]).size
+            + np.load(self.samples[0]["landmarks_vertical"]).size
+        )
 
         # preprocessing for the images
         assert isinstance(
@@ -204,7 +215,9 @@ class HandPoseDataset(Dataset):
             normalized_data = (
                 2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
             )
-            assert not np.isnan(normalized_data).any(), f"there are nans in {subject_id}, {hand}, {pose}, {device}"
+            assert not np.isnan(
+                normalized_data
+            ).any(), f"there are nans in {subject_id}, {hand}, {pose}, {device}"
 
             # assign the new data
             # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
@@ -245,10 +258,10 @@ class HandPoseDataset(Dataset):
         return df
 
     @staticmethod
-    def save_landmarks_data_on_disk(df, path):
+    def save_landmarks_data_on_disk(df, dataset_path, output_path, img_size=224):
         for row in tqdm(
             pl.from_pandas(df).iter_rows(named=True),
-            desc=f"Saving preprocessed landmarks to {path}",
+            desc=f"Saving preprocessed landmarks to {output_path}",
             total=len(df),
         ):
             # parses all the metas
@@ -256,7 +269,7 @@ class HandPoseDataset(Dataset):
                 str(row[col])
                 for col in ["frame_id", "subject_id", "which_hand", "pose"]
             ]
-            landmarks_path = join(path, subject_id.zfill(3), hand, pose)
+            landmarks_path = join(output_path, subject_id.zfill(3), hand, pose)
             # eventually creates the folder
             for device in ["Horizontal", "Vertical"]:
                 # retrieves the landmarks from the big dataframe
@@ -275,9 +288,22 @@ class HandPoseDataset(Dataset):
                     join(landmarks_per_device_path, f"{frame_id.zfill(3)}.npy"),
                     arr_landmarks,
                 )
+                # # saves images on disk
+                # dataset_images_path = join(dataset_path, str(subject_id).zfill(3), hand, pose, device, "images")
+                # preprocessed_images_path = join(output_path, str(subject_id).zfill(3), hand, pose, device, "images")
+                # if not isdir(preprocessed_images_path):
+                #     os.makedirs(preprocessed_images_path)
+                # for image_name in listdir(dataset_images_path):
+                #     if not image_name.endswith(".bmp"):
+                #         continue
+                #     image = Image.open(join(dataset_images_path, image_name))
+                #     image = image.resize((img_size, img_size))
+                #     image.save(join(preprocessed_images_path, image_name[-4:]+".jpg"), optimize=True, quality=50)
 
     @staticmethod
-    def parse_samples(dataset_path, preprocessed_landmarks_path, images_needed="both", poses_dict=None):
+    def parse_samples(
+        dataset_path, preprocessed_landmarks_path, images_needed="both", poses_dict=None
+    ):
         assert images_needed in {"left", "right", "both"}, f"got {images_needed}"
         samples = []
         subject_ids = [f for f in listdir(dataset_path) if isdir(join(dataset_path, f))]
@@ -366,7 +392,9 @@ class HandPoseDataset(Dataset):
                     continue
                 sample[key] = self.images_transforms(Image.open(sample[key]))
             elif key.startswith("landmarks"):
-                sample[key] = torch.from_numpy(np.load(sample[key], allow_pickle=True)).float()
+                sample[key] = torch.from_numpy(
+                    np.load(sample[key], allow_pickle=True)
+                ).float()
         return sample
 
 

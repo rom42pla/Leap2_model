@@ -14,7 +14,7 @@ parser.add_argument("--datasets_path", default=join("..", "..", "datasets"),
                     help="Where the datasets are located")
 parser.add_argument("--batch_size", default=256)
 parser.add_argument("--lr", default=5e-5)
-parser.add_argument("--max_epochs", default=3)
+parser.add_argument("--max_epochs", default=1)
 parser.add_argument("--seed", default=42)
 line_args = vars(parser.parse_args())
 
