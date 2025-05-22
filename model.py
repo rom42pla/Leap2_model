@@ -30,7 +30,8 @@ class Model(pl.LightningModule):
         self.h_dim = h_dim
 
         self.clip = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
-        for param in self.clip.parameters(): param.requires_grad = False;
+        for param in self.clip.parameters(): 
+            param.requires_grad = False
         self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False) # type: ignore
         for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): # type: ignore
             param.requires_grad = True 

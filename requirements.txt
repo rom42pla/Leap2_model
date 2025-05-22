@@ -3,6 +3,7 @@ tqdm
 matplotlib
 colorama
 opencv-python
+jupyter
 pandas
 polars
 pillow
