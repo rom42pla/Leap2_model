@@ -2,7 +2,10 @@
 Repository to efficiently load Leap2 data. The entire pipeline is meant to process the data using Pytorch dataloaders.
 
 ## TL;DR
-`python train.py cfgs/ml2hp_fixed.yaml`
+
+`conda activate ml2hp`
+`python train.py --cfg=cfgs/ml2hp_loso.yaml`
+`python test.py --cfg=cfgs/ml2hp_loso.yaml --checkpoints_path=checkpoints/20250522_1211_ml2hp_loso`
 
 ## Pre-processing
 

@@ -31,8 +31,9 @@ class Model(pl.LightningModule):
 
         self.clip = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
         for param in self.clip.parameters(): param.requires_grad = False;
-        self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False)
-        for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): param.requires_grad = True;
+        self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False) # type: ignore
+        for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): # type: ignore
+            param.requires_grad = True 
 
         self.landmarks_embedder = nn.Sequential(
             nn.Linear(self.num_landmarks, 768*4),
@@ -73,12 +74,14 @@ class Model(pl.LightningModule):
     def step(self, batch, phase):
         outs = self(**batch)
         outs["loss"] = F.cross_entropy(input=outs["cls_logits"], target=batch["label"])
+        if not phase in self.epoch_metrics:
+            self.epoch_metrics[phase] = {}
         for key in ["cls_labels", "cls_logits", "loss"]:
-            if not key in self.epoch_metrics:
-                self.epoch_metrics[key] = []
-        self.epoch_metrics["cls_labels"].append(batch["label"])
-        self.epoch_metrics["cls_logits"].append(outs["cls_logits"])
-        self.epoch_metrics["loss"].append(outs["loss"])
+            if not key in self.epoch_metrics[phase]:
+                self.epoch_metrics[phase][key] = []
+        self.epoch_metrics[phase]["cls_labels"].append(batch["label"])
+        self.epoch_metrics[phase]["cls_logits"].append(outs["cls_logits"])
+        self.epoch_metrics[phase]["loss"].append(outs["loss"])
 
         # outs = {
         #     # "metrics": {},
@@ -108,10 +111,10 @@ class Model(pl.LightningModule):
         return outs
 
     def on_epoch_end(self, phase):
-        logits_stacked = torch.cat(self.epoch_metrics["cls_logits"], dim=0)
-        labels_stacked = torch.cat(self.epoch_metrics["cls_labels"], dim=0)
+        logits_stacked = torch.cat(self.epoch_metrics[phase]["cls_logits"], dim=0)
+        labels_stacked = torch.cat(self.epoch_metrics[phase]["cls_labels"], dim=0)
         metrics = {
-            "cls_loss": torch.stack(self.epoch_metrics["loss"], dim=0).mean(),
+            "cls_loss": torch.stack(self.epoch_metrics[phase]["loss"], dim=0).mean(),
             "cls_prec": torchmetrics.functional.precision(preds=logits_stacked, target=labels_stacked, task="multiclass", num_classes=self.num_classes, average="micro"),
             "cls_rec": torchmetrics.functional.recall(preds=logits_stacked, target=labels_stacked, task="multiclass", num_classes=self.num_classes, average="micro"),
             "cls_acc": torchmetrics.functional.accuracy(preds=logits_stacked, target=labels_stacked, task="multiclass", num_classes=self.num_classes, average="micro"),
@@ -120,18 +123,20 @@ class Model(pl.LightningModule):
         for metric_name, metric_value in metrics.items():
             self.log(name=f"{metric_name}_{phase}", value=metric_value,
                      prog_bar=True if "f1" in metric_name else False)
-        self.epoch_metrics[phase] = {}
+        del self.epoch_metrics[phase]
 
     def training_step(self, batch, batch_idx):
         outs = self.step(batch, phase="train")
         return outs
 
     def validation_step(self, batch, batch_idx):
-        outs = self.step(batch, phase="val")
+        with torch.no_grad():
+            outs = self.step(batch, phase="val")
         return outs
 
     def test_step(self, batch, batch_idx):
-        outs = self.step(batch, phase="test")
+        with torch.no_grad():
+            outs = self.step(batch, phase="test")
         return outs
 
     # def on_test_epoch_start(self):

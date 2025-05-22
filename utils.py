@@ -1,5 +1,5 @@
 import random
-from typing import List
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,7 @@ def get_device_from_string(device: str):
         return "cpu"
     raise NotImplementedError(f"unrecognized device {device}")
     
-def get_simple_runs(dataset, train_perc=0.8) -> List[List[int]]:
+def get_simple_runs(dataset, train_perc=0.8) -> List[Dict[str, Any]]:
     assert 0 < train_perc < 1
     indices_shuffled = np.arange(len(dataset))
     np.random.shuffle(indices_shuffled)

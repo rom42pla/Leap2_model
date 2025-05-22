@@ -1,6 +1,6 @@
 import os
-from os import listdir, makedirs
-from os.path import join, splitext, basename
+from os import listdir
+from os.path import join
 import gc
 from pprint import pprint
 import argparse
@@ -8,9 +8,6 @@ from datetime import datetime
 import torch
 from torch.utils.data import Subset, DataLoader
 from lightning.pytorch import Trainer
-
-# import wandb
-import torchmetrics
 from tqdm import tqdm
 import yaml
 
@@ -18,11 +15,8 @@ from datasets.hand_pose_dataset import HandPoseDataset
 
 from model import Model
 from utils import (
-    find_samples_of_subject,
     get_device_from_string,
-    get_k_fold_runs,
     get_loso_runs,
-    get_simple_runs,
     set_global_seed,
 )
 
@@ -32,14 +26,19 @@ if __name__ == "__main__":
 
     # arguments parsing
     parser = argparse.ArgumentParser(description="Test a model")
-    parser.add_argument("cfg", type=str, help="Path to the configuration")
     parser.add_argument(
-        "checkpoints_path", type=str, help="Path to where the checkpoints are located"
+        "--cfg", type=str, help="Path to the configuration", required=True
+    )
+    parser.add_argument(
+        "--checkpoints_path",
+        type=str,
+        help="Path to where the checkpoints are located",
+        required=True,
     )
     line_args = vars(parser.parse_args())
 
     # loads the configuration file
-    num_workers = os.cpu_count() // 2
+    num_workers = os.cpu_count() // 2 # type: ignore
     with open(line_args["cfg"], "r") as fp:
         cfg = yaml.safe_load(fp)
     pprint(cfg)
@@ -61,49 +60,41 @@ if __name__ == "__main__":
 
     # setup the model
     device = get_device_from_string(cfg["device"])  # "cuda" or "cpu"
-    model = Model(
-        num_labels=dataset.num_labels,
-        num_landmarks=dataset.num_landmarks,
-        img_channels=dataset.img_channels,
-        img_size=dataset.img_size,
-    )
 
     # loops over runs
     for i_run, run in enumerate(runs):
-        if not run["subject_id"] in listdir(line_args["checkpoints_path"]):
+        if not run["subject_id"] in listdir(line_args["checkpoints_path"]): # type: ignore
             print(
-                f"skipping subject {run['subject_id']} as there's no associated checkpoints"
+                f"skipping subject {run['subject_id']} as there's no associated checkpoints" # type: ignore
             )
             continue
 
         # splits the dataset
-        subset = Subset(dataset, indices=run["val_idx"])
         dataloader = DataLoader(
-            dataset=subset,
+            dataset=Subset(dataset, indices=run["val_idx"]), # type: ignore
             batch_size=cfg["batch_size"],
             shuffle=False,
             pin_memory=False,
             num_workers=num_workers,
-            persistent_workers=False,
         )
 
         # loads the model for the subject
         checkpoint_path = join(
             line_args["checkpoints_path"],
-            run["subject_id"],
+            run["subject_id"], # type: ignore
             [
                 filename
                 for filename in listdir(
-                    join(line_args["checkpoints_path"], run["subject_id"])
+                    join(line_args["checkpoints_path"], run["subject_id"]) # type: ignore
                 )
-                if filename.endswith(".pth")
+                if filename.endswith(".ckpt")
             ][0],
         )
 
-        model.to("cpu")
-        model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
-        for param in model.parameters(): param.requires_grad = False;
-        model.to(device)
+        model = Model.load_from_checkpoint(checkpoint_path, map_location=device)
+        for param in model.parameters():
+            param.requires_grad = False
+        # model.to(device)
         model.eval()
 
         # do the training
@@ -115,15 +106,8 @@ if __name__ == "__main__":
             enable_model_summary=True,
             enable_checkpointing=False,
         )
-        print(f"testing on subject {run['subject_id']} using model {checkpoint_path}")
-        # with torch.no_grad():
-        #     for batch in tqdm(dataloader):
-        #         labels = batch["label"].to(device)
-        #         outs = model(**batch)
-        #         print(torchmetrics.functional.f1_score(preds=outs["cls_logits"], target=labels, task="multiclass", num_classes=model.num_classes, average="micro"))
+        print(f"testing on subject {run['subject_id']} using model {checkpoint_path}") # type: ignore
         trainer.test(model, dataloader)
-        
-    # wandb.finish()
 
     # frees some memory
     del dataset

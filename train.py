@@ -12,7 +12,6 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch import Trainer
 import wandb
 import yaml
-import colorama
 from tqdm import tqdm
 
 from datasets.hand_pose_dataset import HandPoseDataset
@@ -32,11 +31,11 @@ if __name__ == "__main__":
 
     # arguments parsing
     parser = argparse.ArgumentParser(description="Train a model")
-    parser.add_argument("cfg", type=str, help="Path to the configuration")
+    parser.add_argument("--cfg", type=str, help="Path to the configuration", required=True)
     line_args = vars(parser.parse_args())
 
     # loads the configuration file
-    num_workers = os.cpu_count() // 2
+    num_workers = os.cpu_count() // 2 # type: ignore
     with open(line_args["cfg"], "r") as fp:
         cfg = yaml.safe_load(fp)
     pprint(cfg)
@@ -76,7 +75,6 @@ if __name__ == "__main__":
     )
 
     # saves the initial weights of the model
-    print(model)
     initial_state_dict_path = join(".", "_initial_state_dict.pth")
     torch.save({"model_state_dict": model.state_dict()}, initial_state_dict_path)
 
@@ -89,20 +87,21 @@ if __name__ == "__main__":
     for i_run, run in enumerate(runs):
         if cfg["validation"] == "loso":
             print(
-                f"doing run for subject {i_run+1} of {len(runs)} ({((i_run+1)/len(runs)) * 100:.1f}%)"
+                f"doing run for subject {run['subject_id']} ({((i_run+1)/len(runs)) * 100:.1f}%)" # type: ignore
             )
-            experiment_run_path = join(experiment_path, str(i_run + 1).zfill(3))
+            run_name = run['subject_id'] # type: ignore
+            
         else:
             print(
                 f"doing run {i_run+1} of {len(runs)} ({((i_run+1)/len(runs)) * 100:.1f}%)"
             )
-            experiment_run_path = join(experiment_path, f"run_{i_run}")
-
+            run_name = f"run_{i_run}"
+        experiment_run_path = join(experiment_path, run_name)
         makedirs(experiment_run_path, exist_ok=True)
 
         # splits the dataset
         dataloader_train = DataLoader(
-            dataset=Subset(dataset, indices=run["train_idx"]),
+            dataset=Subset(dataset, indices=run["train_idx"]), # type: ignore
             batch_size=cfg["batch_size"],
             shuffle=True,
             pin_memory=False,
@@ -110,7 +109,7 @@ if __name__ == "__main__":
             persistent_workers=True,
         )
         dataloader_val = DataLoader(
-            dataset=Subset(dataset, indices=run["val_idx"]),
+            dataset=Subset(dataset, indices=run["val_idx"]), # type: ignore
             batch_size=cfg["batch_size"],
             shuffle=False,
             pin_memory=False,
@@ -126,7 +125,7 @@ if __name__ == "__main__":
         model.to(device)
 
         wandb_logger = WandbLogger(
-            project="ml2hp", name=run_name, log_model=False, prefix=f"run_{i_run}"
+            project="ml2hp", name=run_name, log_model=False, prefix=run_name
         )
 
         # do the training
@@ -148,13 +147,6 @@ if __name__ == "__main__":
             callbacks=[checkpoint_callback],
         )
         trainer.fit(model, dataloader_train, dataloader_val)
-
-        # saves the weights
-        best_model = Model.load_from_checkpoint(checkpoint_callback.best_model_path, map_location=device)
-        torch.save(best_model.state_dict(), f"{splitext(checkpoint_callback.best_model_path)[0]}.pth")
-        best_model.load_state_dict(torch.load(f"{splitext(checkpoint_callback.best_model_path)[0]}.pth", weights_only=True))
-        trainer.test(best_model, dataloader_val)
-        os.remove(checkpoint_callback.best_model_path)
     wandb.finish()
 
     # frees some memory
