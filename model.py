@@ -58,6 +58,7 @@ class Model(pl.LightningModule):
         self.epoch_metrics = {}
 
     def _parse_image_backbone(self, name):
+        #TODO think about images normalization
         assert (
             name in self._possible_image_backbones
         ), f"got {name}, expected one of {self._possible_image_backbones}"
