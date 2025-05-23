@@ -45,14 +45,23 @@ class Model(pl.LightningModule):
         assert isinstance(h_dim, int) and h_dim > 0, h_dim
         self.h_dim = h_dim
 
-        """
-        IMAGES 
-        BRANCH
-        """
+        self.image_embedder = self._parse_image_backbone(name=image_backbone_name) 
+        self.landmarks_embedder = self._parse_landmarks_backbone(name=landmarks_backbone_name)
+        self.classify = self._parse_merging_method(name=merging_method)
+
+        # optimizer params
+        assert lr > 0
+        self.lr = lr
+
+        self.save_hyperparameters(ignore="epoch_metrics")
+
+        self.epoch_metrics = {}
+
+    def _parse_image_backbone(self, name):
         assert (
-            image_backbone_name in self._possible_image_backbones
-        ), f"got {image_backbone_name}, expected one of {self._possible_image_backbones}"
-        self._image_backbone_name = image_backbone_name
+            name in self._possible_image_backbones
+        ), f"got {name}, expected one of {self._possible_image_backbones}"
+        self._image_backbone_name = name
         self._adapter = nn.Conv2d(
             in_channels=self.img_channels * 2,
             out_channels=3,
@@ -66,7 +75,7 @@ class Model(pl.LightningModule):
                 "resnet18.a1_in1k", pretrained=True
             )
             self._image_backbone.fc = nn.Identity()
-            self.image_embedder = lambda imgs: self._image_backbone(self._adapter(imgs))
+            image_embedder = lambda imgs: self._image_backbone(self._adapter(imgs))
         elif self._image_backbone_name == "clip":
             self.image_features_size = 768
             self._image_backbone = CLIPVisionModel.from_pretrained(
@@ -75,13 +84,13 @@ class Model(pl.LightningModule):
             # self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False) # type: ignore
             # for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): # type: ignore
             #     param.requires_grad = True
-            self.image_embedder = lambda imgs: self._image_backbone(
+            image_embedder = lambda imgs: self._image_backbone(
                 pixel_values=self._adapter(imgs)
             ).pooler_output
         elif self._image_backbone_name == "dinov2":
             self.image_features_size = 768
             self._image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
-            self.image_embedder = lambda imgs: self._image_backbone(
+            image_embedder = lambda imgs: self._image_backbone(
                 pixel_values=self._adapter(imgs)
             ).pooler_output
         else:
@@ -91,14 +100,12 @@ class Model(pl.LightningModule):
         # freezes the backbone
         for param in self._image_backbone.parameters():
             param.requires_grad = False
-
-        """
-        LANDMARKS 
-        BRANCH
-        """
+        return image_embedder
+    
+    def _parse_landmarks_backbone(self, name):
         assert (
-            landmarks_backbone_name in self._possible_landmarks_backbones
-        ), f"got {landmarks_backbone_name}, expected one of {self._possible_landmarks_backbones}"
+            name in self._possible_landmarks_backbones
+        ), f"got {name}, expected one of {self._possible_landmarks_backbones}"
         self._landmarks_backbone_name = landmarks_backbone_name
         self.landmarks_features_size = 768
         if self._landmarks_backbone_name == "none":
@@ -118,22 +125,19 @@ class Model(pl.LightningModule):
             raise NotImplementedError(
                 f"landmarks backbone {self._landmarks_backbone_name} not implemented"
             )
-        self.landmarks_embedder = lambda landmarks: self._landmarks_backbone(landmarks)
-
-        """
-        MERGING 
-        BRANCH
-        """
+        return lambda landmarks: self._landmarks_backbone(landmarks)
+    
+    def _parse_merging_method(self, name):
         assert (
-            merging_method in self._possible_merging_methods
-        ), f"got {merging_method}, expected one of {self._possible_merging_methods}"
-        self._merging_method = merging_method
+            name in self._possible_merging_methods
+        ), f"got {name}, expected one of {self._possible_merging_methods}"
+        self._merging_method = name
         if self._merging_method == "concatenate":
             self._cls_head = nn.Linear(
                 self.image_features_size + self.landmarks_features_size,
                 self.num_classes,
             )
-            self.classify = lambda image_features, landmarks_features: self._cls_head(
+            classify = lambda image_features, landmarks_features: self._cls_head(
                 torch.concatenate([image_features, landmarks_features], dim=1)
             )
         elif self._merging_method == "sum":
@@ -151,7 +155,7 @@ class Model(pl.LightningModule):
                 self.landmarks_features_embedder = nn.Linear(
                     self.landmarks_features_size, h_dim
                 )
-            self.classify = lambda image_features, landmarks_features: self._cls_head(
+            classify = lambda image_features, landmarks_features: self._cls_head(
                 self.image_features_embedder(image_features)
                 + self.landmarks_features_embedder(landmarks_features)
             )
@@ -159,14 +163,8 @@ class Model(pl.LightningModule):
             raise NotImplementedError(
                 f"merging method {self._merging_method} not implemented"
             )
+        return classify
 
-        # optimizer params
-        assert lr > 0
-        self.lr = lr
-
-        self.save_hyperparameters(ignore="epoch_metrics")
-
-        self.epoch_metrics = {}
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
@@ -204,9 +202,6 @@ class Model(pl.LightningModule):
         return outs
 
     def step(self, batch, phase):
-        # for k, v in batch.items():
-        #     if isinstance(v, torch.Tensor):
-        #         print(k, v.shape)
         outs = self(**batch)
         outs["loss"] = F.cross_entropy(input=outs["cls_logits"], target=batch["label"])
         if not phase in self.epoch_metrics:
