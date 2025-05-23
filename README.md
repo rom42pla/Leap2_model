@@ -7,7 +7,7 @@ Repository to efficiently load Leap2 data. The entire pipeline is meant to proce
 conda activate ml2hp
 python generate_configs.py
 python train.py --cfg=cfgs/ml2hp_loso.yaml
-python test.py --cfg=cfgs/ml2hp_loso.yaml --checkpoints_path=checkpoints/20250522_1211_ml2hp_loso
+python test.py --cfg=cfgs/ml2hp_loso.yaml --checkpoints_path=checkpoints/20250522_1234_ml2hp_loso
 ```
 
 ## Pre-processing
