@@ -18,6 +18,8 @@ from tqdm import tqdm
 
 
 class HandPoseDataset(Dataset):
+    _possible_images_needed = ["left", "right", "both"]
+
     def __init__(
         self,
         dataset_path,
@@ -28,7 +30,7 @@ class HandPoseDataset(Dataset):
     ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
-        assert images_needed in ["left", "right", "both"]
+        assert images_needed in self._possible_images_needed
         self.images_needed = images_needed
         self.normalize_landmarks = True
 
@@ -81,12 +83,14 @@ class HandPoseDataset(Dataset):
                 )
             # save the preprocessed landmarks on disk
             self.save_landmarks_data_on_disk(
-                self.df_landmarks_prep, self.dataset_path, self.preprocessed_dataset_path
+                self.df_landmarks_prep,
+                self.dataset_path,
+                self.preprocessed_dataset_path,
             )
             # self.save_compressed_images_on_disk(
             #     self.df_landmarks_prep, self.preprocessed_dataset_path
             # )
-        
+
         # loads the infos for each sample
         self.samples = self.parse_samples(
             dataset_path=self.dataset_path,
@@ -383,19 +387,31 @@ class HandPoseDataset(Dataset):
         return indices_per_subject
 
     def __getitem__(self, idx):
-        sample = deepcopy(self.samples[idx])
+        sample = self.samples[idx]
+        outs = {
+            "label": sample["label"]
+        }
         for key in sample:
             if key.startswith("image"):
+                # skips some images that are not needed
                 if key.endswith("left") and self.images_needed == "right":
                     continue
                 elif key.endswith("right") and self.images_needed == "left":
                     continue
-                sample[key] = self.images_transforms(Image.open(sample[key]))
+                # loads the image
+                image = self.images_transforms(Image.open(sample[key]))
+                # adjusts some keys if there is just one image needed
+                if "horizontal" in key:
+                    outs["image_horizontal"] = image
+                elif "vertical" in key:
+                    outs["image_vertical"] = image
+                else:
+                    raise Exception
             elif key.startswith("landmarks"):
-                sample[key] = torch.from_numpy(
+                outs[key] = torch.from_numpy(
                     np.load(sample[key], allow_pickle=True)
                 ).float()
-        return sample
+        return outs
 
 
 if __name__ == "__main__":

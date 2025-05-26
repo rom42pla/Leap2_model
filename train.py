@@ -32,6 +32,7 @@ if __name__ == "__main__":
     # arguments parsing
     parser = argparse.ArgumentParser(description="Train a model")
     parser.add_argument("--cfg", type=str, help="Path to the configuration", required=True)
+    parser.add_argument("--run_name", type=str, help="The name to prepend to the run when logging", required=False)
     line_args = vars(parser.parse_args())
 
     # loads the configuration file
@@ -81,7 +82,12 @@ if __name__ == "__main__":
     # metas
     date = datetime.now().strftime("%Y%m%d_%H%M")
     cfg_name = splitext(basename(line_args["cfg"]))[0]
-    run_name = f"{date}_{cfg_name}"
+    experiment_name = f"{date}_{cfg_name}"
+    if line_args["run_name"] is not None:
+        experiment_name += f"_{line_args['run_name']}"
+    # saves the parameters used in the config
+    with open(join(experiment_path, "cfg.yaml"), 'w') as fp:
+        yaml.dump(cfg, fp, default_flow_style=False)
 
     # loops over runs
     for i_run, run in enumerate(runs):
@@ -125,7 +131,7 @@ if __name__ == "__main__":
         model.to(device)
 
         wandb_logger = WandbLogger(
-            project="ml2hp", name=run_name, log_model=False, prefix=run_name
+            project="ml2hp", name=experiment_name, log_model=False, prefix=run_name
         )
 
         # do the training

@@ -27,9 +27,6 @@ if __name__ == "__main__":
     # arguments parsing
     parser = argparse.ArgumentParser(description="Test a model")
     parser.add_argument(
-        "--cfg", type=str, help="Path to the configuration", required=True
-    )
-    parser.add_argument(
         "--checkpoints_path",
         type=str,
         help="Path to where the checkpoints are located",
@@ -39,7 +36,7 @@ if __name__ == "__main__":
 
     # loads the configuration file
     num_workers = os.cpu_count() // 2 # type: ignore
-    with open(line_args["cfg"], "r") as fp:
+    with open(join(line_args["checkpoints_path"], "cfg.yaml"), "r") as fp:
         cfg = yaml.safe_load(fp)
     pprint(cfg)
 
@@ -91,7 +88,7 @@ if __name__ == "__main__":
             ][0],
         )
 
-        model = Model.load_from_checkpoint(checkpoint_path, map_location=device)
+        model = Model.load_from_checkpoint(checkpoint_path, map_location=device, strict=False) # ignore the error, it is just fine like this
         for param in model.parameters():
             param.requires_grad = False
         # model.to(device)

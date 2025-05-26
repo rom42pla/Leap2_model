@@ -2,11 +2,12 @@ from abc import abstractmethod
 import itertools
 import math
 from pprint import pprint
+from types import FunctionType
 import torch
 import torch.nn.functional as F
 import lightning as pl
 import torchmetrics
-from typing import Optional, Union, List
+from typing import Any, Callable, Tuple
 from torch import nn
 from tqdm import tqdm
 import timm
@@ -14,8 +15,15 @@ from transformers import CLIPVisionModel, AutoModel
 
 
 class Model(pl.LightningModule):
-    _possible_landmarks_backbones = {"none", "linear", "mlp"}
-    _possible_image_backbones = {"resnet", "clip", "dinov2"}
+    _possible_data_available = {
+        "only_both_images",
+        "only_one_image",
+        "only_both_landmarks",
+        "only_one_kind_of_landmarks",
+        "both_images_and_landmarks",
+    }
+    _possible_landmarks_backbones = {None, "unprocessed", "linear", "mlp"}
+    _possible_image_backbones = {None, "resnet", "clip", "dinov2"}
     _possible_merging_methods = {
         "concatenate",
         "sum",
@@ -27,6 +35,7 @@ class Model(pl.LightningModule):
         num_landmarks: int,
         img_channels: int,
         img_size: int,
+        data_available: str = "both_images_and_landmarks",
         image_backbone_name: str = "clip",
         landmarks_backbone_name: str = "mlp",
         merging_method: str = "concatenate",
@@ -35,6 +44,18 @@ class Model(pl.LightningModule):
         **kwargs,
     ):
         super(Model, self).__init__()
+        assert (
+            data_available in self._possible_data_available
+        ), f"got {data_available}, expected one of {self._possible_data_available}"
+        self.data_available = data_available
+        if "image" in self.data_available:
+            assert (
+                image_backbone_name is not None
+            ), f"got mode '{self.data_available}' but got no image backbone name"
+        if "landmarks" in self.data_available:
+            assert (
+                landmarks_backbone_name is not None
+            ), f"got mode '{self.data_available}' but got no landmarks backbone name"
 
         self.num_classes = num_labels
         self.num_landmarks = num_landmarks
@@ -45,127 +66,162 @@ class Model(pl.LightningModule):
         assert isinstance(h_dim, int) and h_dim > 0, h_dim
         self.h_dim = h_dim
 
-        self.image_embedder = self._parse_image_backbone(name=image_backbone_name) 
-        self.landmarks_embedder = self._parse_landmarks_backbone(name=landmarks_backbone_name)
-        self.classify = self._parse_merging_method(name=merging_method)
+        # image backbone
+        self.image_backbone_name = image_backbone_name
+        if self.image_backbone_name:
+            self.adapter = nn.Conv2d(
+                in_channels=self.img_channels
+                * (2 if "both" in self.data_available else 1),
+                out_channels=3,
+                kernel_size=11,
+                stride=1,
+                padding="same",
+            )
+        self.image_features_size, self.image_backbone, self.image_embedder = (
+            self._parse_image_backbone(name=self.image_backbone_name)
+        )
+
+        # landmarks backbone
+        self.landmarks_backbone_name = landmarks_backbone_name
+        (
+            self.landmarks_features_size,
+            self.landmarks_backbone,
+            self.landmarks_embedder,
+        ) = self._parse_landmarks_backbone(name=self.landmarks_backbone_name)
+
+        # classifier
+        self.merging_method_name = merging_method
+        (
+            self.image_features_embedder,
+            self.landmarks_features_embedder,
+            self.cls_head,
+            self.classify,
+        ) = self._parse_merging_method(name=self.merging_method_name)
 
         # optimizer params
         assert lr > 0
         self.lr = lr
 
-        self.save_hyperparameters(ignore="epoch_metrics")
-
         self.epoch_metrics = {}
 
-    def _parse_image_backbone(self, name):
-        #TODO think about images normalization
+        self.save_hyperparameters(ignore=["epoch_metrics"])
+
+    # returns image features size, the image backbone and the function to call the backbone
+    def _parse_image_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
         assert (
             name in self._possible_image_backbones
         ), f"got {name}, expected one of {self._possible_image_backbones}"
-        self._image_backbone_name = name
-        self._adapter = nn.Conv2d(
-            in_channels=self.img_channels * 2,
-            out_channels=3,
-            kernel_size=11,
-            stride=1,
-            padding="same",
-        )
-        if self._image_backbone_name == "resnet":
-            self.image_features_size = 512
-            self._image_backbone = timm.create_model(
-                "resnet18.a1_in1k", pretrained=True
-            )
-            self._image_backbone.fc = nn.Identity()
-            image_embedder = lambda imgs: self._image_backbone(self._adapter(imgs))
-        elif self._image_backbone_name == "clip":
-            self.image_features_size = 768
-            self._image_backbone = CLIPVisionModel.from_pretrained(
+        if name is None:
+            return 0, nn.Identity(), nn.Identity()
+        elif name == "resnet":
+            image_features_size = 512
+            image_backbone = timm.create_model("resnet18.a1_in1k", pretrained=True)
+            image_backbone.fc = nn.Identity()
+            image_embedder = lambda imgs: image_backbone(self.adapter(imgs))
+        elif name == "clip":
+            image_features_size = 768
+            image_backbone = CLIPVisionModel.from_pretrained(
                 "openai/clip-vit-base-patch32"
             )
-            # self.clip.vision_model.embeddings.patch_embedding = nn.Conv2d(self.img_channels * 2, 768, kernel_size=32, stride=32, bias=False) # type: ignore
-            # for param in self.clip.vision_model.embeddings.patch_embedding.parameters(): # type: ignore
-            #     param.requires_grad = True
-            image_embedder = lambda imgs: self._image_backbone(
-                pixel_values=self._adapter(imgs)
+            image_embedder = lambda imgs: image_backbone(
+                pixel_values=self.adapter(imgs)
             ).pooler_output
-        elif self._image_backbone_name == "dinov2":
-            self.image_features_size = 768
-            self._image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
-            image_embedder = lambda imgs: self._image_backbone(
-                pixel_values=self._adapter(imgs)
+        elif name == "dinov2":
+            image_features_size = 768
+            image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
+            image_embedder = lambda imgs: image_backbone(
+                pixel_values=self.adapter(imgs)
             ).pooler_output
         else:
             raise NotImplementedError(
-                f"image backbone {self._image_backbone_name} not implemented"
+                f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
             )
         # freezes the backbone
-        for param in self._image_backbone.parameters():
+        for param in image_backbone.parameters():
             param.requires_grad = False
-        return image_embedder
-    
-    def _parse_landmarks_backbone(self, name):
-        assert (
-            name in self._possible_landmarks_backbones
-        ), f"got {name}, expected one of {self._possible_landmarks_backbones}"
-        self._landmarks_backbone_name = landmarks_backbone_name
-        self.landmarks_features_size = 768
-        if self._landmarks_backbone_name == "none":
-            self.landmarks_features_size = self.num_landmarks
-            self._landmarks_backbone = nn.Identity()
-        elif self._landmarks_backbone_name == "linear":
-            self._landmarks_backbone = nn.Linear(
-                self.num_landmarks, self.landmarks_features_size
-            )
-        elif self._landmarks_backbone_name == "mlp":
-            self._landmarks_backbone = nn.Sequential(
+        return image_features_size, image_backbone, image_embedder
+
+    def _parse_landmarks_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
+        landmarks_features_size = 768
+        if name is None:
+            return 0, nn.Identity(), nn.Identity()
+        if name == "unprocessed":
+            landmarks_features_size = self.num_landmarks
+            landmarks_backbone = nn.Identity()
+        elif name == "linear":
+            landmarks_backbone = nn.Linear(self.num_landmarks, landmarks_features_size)
+        elif name == "mlp":
+            landmarks_backbone = nn.Sequential(
                 nn.Linear(self.num_landmarks, 512 * 4),
                 nn.LeakyReLU(),
-                nn.Linear(512 * 4, self.landmarks_features_size),
+                nn.Linear(512 * 4, landmarks_features_size),
             )
         else:
             raise NotImplementedError(
-                f"landmarks backbone {self._landmarks_backbone_name} not implemented"
+                f"got landmarks backbone '{name}', expected one of {self._possible_landmarks_backbones}"
             )
-        return lambda landmarks: self._landmarks_backbone(landmarks)
-    
-    def _parse_merging_method(self, name):
-        assert (
-            name in self._possible_merging_methods
-        ), f"got {name}, expected one of {self._possible_merging_methods}"
-        self._merging_method = name
-        if self._merging_method == "concatenate":
-            self._cls_head = nn.Linear(
+        landamarks_embedder = lambda landmarks: landmarks_backbone(landmarks)
+        return landmarks_features_size, landmarks_backbone, landamarks_embedder
+
+    def _parse_merging_method(
+        self, name
+    ) -> Tuple[nn.Module, nn.Module, nn.Module, Callable]:
+        image_features_embedder, landmarks_features_embedder = (
+            nn.Identity(),
+            nn.Identity(),
+        )
+        if name == "concatenate":
+            cls_head = nn.Linear(
                 self.image_features_size + self.landmarks_features_size,
                 self.num_classes,
             )
-            classify = lambda image_features, landmarks_features: self._cls_head(
-                torch.concatenate([image_features, landmarks_features], dim=1)
-            )
-        elif self._merging_method == "sum":
+
+            def classify(image_features, landmarks_features):
+                assert (image_features is not None) or (landmarks_features is not None)
+                tensors = []
+                if image_features is not None:
+                    tensors.append(image_features)
+                if landmarks_features is not None:
+                    tensors.append(landmarks_features)
+                return cls_head(torch.concatenate(tensors, dim=1))
+
+        elif name == "sum":
             h_dim = max(self.image_features_size, self.landmarks_features_size)
-            self._cls_head = nn.Linear(h_dim, self.num_classes)
-            self.image_features_embedder, self.landmarks_features_embedder = (
-                nn.Identity(),
-                nn.Identity(),
-            )
+            cls_head = nn.Linear(h_dim, self.num_classes)
             if self.image_features_size != h_dim:
-                self.image_features_embedder = nn.Linear(
-                    self.image_features_size, h_dim
-                )
+                image_features_embedder = nn.Linear(self.image_features_size, h_dim)
             elif self.landmarks_features_size != h_dim:
-                self.landmarks_features_embedder = nn.Linear(
+                landmarks_features_embedder = nn.Linear(
                     self.landmarks_features_size, h_dim
                 )
-            classify = lambda image_features, landmarks_features: self._cls_head(
-                self.image_features_embedder(image_features)
-                + self.landmarks_features_embedder(landmarks_features)
-            )
+
+            def classify(image_features, landmarks_features):
+                assert (image_features is not None) or (landmarks_features is not None)
+                tensors = []
+                if image_features is not None:
+                    tensors.append(image_features_embedder(image_features))
+                if landmarks_features is not None:
+                    tensors.append(landmarks_features_embedder(landmarks_features))
+                return cls_head(sum(tensors))
+
         else:
             raise NotImplementedError(
                 f"merging method {self._merging_method} not implemented"
             )
-        return classify
+        return image_features_embedder, landmarks_features_embedder, cls_head, classify
 
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        keys_to_pop = []
+        for module_name in checkpoint["state_dict"].keys():
+            if module_name.startswith("_image_backbone"):
+                keys_to_pop.append(module_name)
+        for module_name in keys_to_pop:
+            del checkpoint["state_dict"][module_name]
+
+    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        self.image_features_size, self.image_backbone, self.image_embedder = (
+            self._parse_image_backbone(name=self.image_backbone_name)
+        )
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
@@ -177,26 +233,39 @@ class Model(pl.LightningModule):
     @abstractmethod
     def forward(
         self,
-        landmarks_horizontal,
-        landmarks_vertical,
-        image_horizontal_left,
-        image_vertical_left,
+        landmarks_horizontal=None,
+        landmarks_vertical=None,
+        image_horizontal=None,
+        image_vertical=None,
         **kwargs,
     ):
-        outs = {}
-        imgs = (
-            torch.cat([image_horizontal_left, image_vertical_left], dim=1)
-            .float()
-            .to(self.device)
-        )
-        landmarks = (
-            torch.cat([landmarks_horizontal, landmarks_vertical], dim=1)
-            .float()
-            .to(self.device)
-        )
+        outs = {
+            "imgs_embs": None,
+            "landmarks_embs": None,
+        }
+        if self.image_backbone_name is not None:
+            t = []
+            if image_horizontal is not None:
+                t.append(image_horizontal)
+            if image_vertical is not None:
+                t.append(image_vertical)
+            # eventually uses just one image
+            if self.data_available == "only_one_image" and len(t) > 1:
+                 t = [t[0]]
+            imgs = torch.cat(t, dim=1).float().to(self.device)
+            outs["imgs_embs"] = self.image_embedder(imgs)
 
-        outs["imgs_embs"] = self.image_embedder(imgs)
-        outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
+        if self.landmarks_backbone_name is not None:
+            t = []
+            if landmarks_horizontal is not None:
+                t.append(landmarks_horizontal)
+            if landmarks_vertical is not None:
+                t.append(landmarks_vertical)
+            # eventually uses just one kind of landmarks
+            if self.data_available == "only_one_kind_of_landmarks" and len(t) > 1:
+                t = [t[0]]
+            landmarks = torch.cat(t, dim=1).float().to(self.device)
+            outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
         outs["cls_logits"] = self.classify(
             image_features=outs["imgs_embs"], landmarks_features=outs["landmarks_embs"]
         )
@@ -315,6 +384,7 @@ class Model(pl.LightningModule):
 
 
 if __name__ == "__main__":
+    # define params for the tests
     params = {
         "num_labels": 17,
         "batch_size": 16,
@@ -324,6 +394,7 @@ if __name__ == "__main__":
         "device": "cuda" if torch.cuda.is_available() else "cpu",
     }
 
+    # define a dummy batch
     dummy_batch = {
         "landmarks_horizontal": torch.rand(
             [params["batch_size"], params["num_landmarks"]], device=params["device"]
@@ -331,7 +402,7 @@ if __name__ == "__main__":
         "landmarks_vertical": torch.rand(
             [params["batch_size"], params["num_landmarks"]], device=params["device"]
         ),
-        "image_horizontal_left": torch.rand(
+        "image_horizontal": torch.rand(
             [
                 params["batch_size"],
                 params["img_channels"],
@@ -340,7 +411,7 @@ if __name__ == "__main__":
             ],
             device=params["device"],
         ),
-        "image_vertical_left": torch.rand(
+        "image_vertical": torch.rand(
             [
                 params["batch_size"],
                 params["img_channels"],
@@ -353,10 +424,15 @@ if __name__ == "__main__":
             [params["batch_size"], params["num_labels"]], device=params["device"]
         ),
     }
-    params["num_landmarks"] *= 2
-    for landmarks_backbone_name, image_backbone_name, merging_method in tqdm(
+    for (
+        data_available,
+        landmarks_backbone_name,
+        image_backbone_name,
+        merging_method,
+    ) in tqdm(
         list(
             itertools.product(
+                Model._possible_data_available,
                 Model._possible_landmarks_backbones,
                 Model._possible_image_backbones,
                 Model._possible_merging_methods,
@@ -364,15 +440,26 @@ if __name__ == "__main__":
         ),
         desc="trying all backbones combinations",
     ):
-        try:
-            model = Model(
-                image_backbone_name=image_backbone_name,
-                landmarks_backbone_name=landmarks_backbone_name,
-                merging_method=merging_method,
-                **params,
-            ).to(params["device"])
-            model.step(batch=dummy_batch, phase="train")
-        except Exception as e:
-            print(
-                f"combination {landmarks_backbone_name, image_backbone_name, merging_method} failed with error {e}"
-            )
+        if (
+            not (landmarks_backbone_name or image_backbone_name)
+            or ("landmarks" in data_available and not landmarks_backbone_name)
+            or ("image" in data_available and not image_backbone_name)
+        ):
+            continue
+        # try:
+        print(
+            data_available, image_backbone_name, landmarks_backbone_name, merging_method
+        )
+        model = Model(
+            data_available=data_available,
+            image_backbone_name=image_backbone_name,
+            landmarks_backbone_name=landmarks_backbone_name,
+            merging_method=merging_method,
+            **params,
+        ).to(params["device"])
+        model.step(batch=dummy_batch, phase="train")
+        del model
+        # except Exception as e:
+        #     print(
+        #         f"combination {landmarks_backbone_name, image_backbone_name, merging_method} failed with error {e}"
+        #     )
