@@ -20,12 +20,16 @@ from datasets.hand_pose_dataset import HandPoseDataset
 
 
 class Model(pl.LightningModule):
-    _possible_landmarks_backbones = {None, "unprocessed", "linear", "mlp"}
-    _possible_image_backbones = {None, "resnet", "clip", "dinov2"}
-    _possible_merging_methods = {
-        "concatenate",
-        "sum",
-    }
+    _possible_landmarks_backbones = {None, "linear", "mlp"}
+    _possible_image_backbones = {
+        None,
+        "resnet",
+        "convnext",
+        "clip_t",
+        "clip_b",
+        "dinov2_t",
+        "dinov2_b",
+    }  # TODO add models
 
     def __init__(
         self,
@@ -54,7 +58,9 @@ class Model(pl.LightningModule):
         self.use_vertical_landmarks = use_vertical_landmarks
 
         # parses channels and image size
-        if (self.use_horizontal_images or self.use_vertical_images) and image_backbone_name is None:
+        if (
+            self.use_horizontal_images or self.use_vertical_images
+        ) and image_backbone_name is None:
             image_backbone_name = "resnet"
         self.image_backbone_name = image_backbone_name
         if not any([self.use_horizontal_images, self.use_vertical_images]):
@@ -63,11 +69,18 @@ class Model(pl.LightningModule):
             image_backbone_name = None
         else:
             assert img_size > 0, f"got {img_size=}, expected > 0"
-            self.img_channels = sum([1 if self.use_horizontal_images else 0, 1 if self.use_vertical_images else 0])
+            self.img_channels = sum(
+                [
+                    1 if self.use_horizontal_images else 0,
+                    1 if self.use_vertical_images else 0,
+                ]
+            )
             self.img_size = img_size
 
         # parses number of landmarks
-        if (self.use_horizontal_landmarks or self.use_vertical_landmarks) and landmarks_backbone_name is None:
+        if (
+            self.use_horizontal_landmarks or self.use_vertical_landmarks
+        ) and landmarks_backbone_name is None:
             landmarks_backbone_name = "unprocessed"
         self.landmarks_backbone_name = landmarks_backbone_name
         if not any([self.use_horizontal_landmarks, self.use_vertical_landmarks]):
@@ -76,7 +89,6 @@ class Model(pl.LightningModule):
         else:
             assert num_landmarks > 0, f"got {self.num_landmarks=}, expected > 0"
             self.num_landmarks = num_landmarks
-        
 
         # parses number of labels
         assert isinstance(num_labels, int) and num_labels > 0, num_labels
@@ -309,7 +321,7 @@ class Model(pl.LightningModule):
                 landmarks.append(landmarks_vertical)
             landmarks = torch.cat(landmarks, dim=1).float().to(self.device)
             outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
-        
+
         # merging branch
         outs["cls_logits"] = self.classify(
             image_features=outs["imgs_embs"], landmarks_features=outs["landmarks_embs"]
@@ -476,23 +488,19 @@ if __name__ == "__main__":
             torch.cuda.empty_cache()
         time.sleep(1)
 
-
-
-
-
-
-
-
-
     for (
-
         use_horizontal_images,
         use_vertical_images,
         use_horizontal_landmarks,
         use_vertical_landmarks,
-    ) in tqdm(list(itertools.product(
-        [True, False], [True, False], [True, False], [True, False]
-    )), desc="trying all modes combinations"):
+    ) in tqdm(
+        list(
+            itertools.product(
+                [True, False], [True, False], [True, False], [True, False]
+            )
+        ),
+        desc="trying all modes combinations",
+    ):
         # skips incompatible combinations
         if (
             (
@@ -548,4 +556,3 @@ if __name__ == "__main__":
             torch.cuda.empty_cache()
         time.sleep(1)
     print("All tests passed successfully!")
-            
