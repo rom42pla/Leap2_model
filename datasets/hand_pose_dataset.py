@@ -121,6 +121,12 @@ class HandPoseDataset(Dataset):
             ]
         )
 
+        # mode-related attributes
+        self.return_horizontal_landmarks = True
+        self.return_vertical_landmarks = True
+        self.return_horizontal_images = True
+        self.return_vertical_images = True
+
     def __len__(self):
         return len(self.samples)
 
@@ -386,11 +392,50 @@ class HandPoseDataset(Dataset):
             indices_per_subject[subject_id].append(i_sample)
         return indices_per_subject
 
+    def set_mode(
+        self,
+        return_horizontal_images=None,
+        return_vertical_images=None,
+        return_horizontal_landmarks=None,
+        return_vertical_landmarks=None,
+    ):
+        if return_horizontal_images is not None:
+            assert isinstance(return_horizontal_images, bool)
+            self.return_horizontal_images = return_horizontal_images
+        if return_vertical_images is not None:
+            assert isinstance(return_vertical_images, bool)
+            self.return_vertical_images = return_vertical_images
+        if return_horizontal_landmarks is not None:
+            assert isinstance(return_horizontal_landmarks, bool)
+            self.return_horizontal_landmarks = return_horizontal_landmarks
+        if return_vertical_landmarks is not None:
+            assert isinstance(return_vertical_landmarks, bool)
+            self.return_vertical_landmarks = return_vertical_landmarks
+        # sets new correct parameters
+        self.img_channels = sum(
+            [
+                1 if self.return_horizontal_images else 0,
+                1 if self.return_vertical_images else 0,
+            ]
+        )
+        self.num_landmarks = sum(
+            [
+                (
+                    np.load(self.samples[0]["landmarks_horizontal"]).size
+                    if self.return_horizontal_landmarks
+                    else 0
+                ),
+                (
+                    np.load(self.samples[0]["landmarks_vertical"]).size
+                    if self.return_vertical_landmarks
+                    else 0
+                ),
+            ]
+        )
+
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        outs = {
-            "label": sample["label"]
-        }
+        outs = {"label": sample["label"]}
         for key in sample:
             if key.startswith("image"):
                 # skips some images that are not needed
@@ -401,16 +446,37 @@ class HandPoseDataset(Dataset):
                 # loads the image
                 image = self.images_transforms(Image.open(sample[key]))
                 # adjusts some keys if there is just one image needed
-                if "horizontal" in key:
+                if "horizontal" in key and self.return_horizontal_images:
                     outs["image_horizontal"] = image
-                elif "vertical" in key:
+                elif "vertical" in key and self.return_vertical_images:
                     outs["image_vertical"] = image
-                else:
-                    raise Exception
             elif key.startswith("landmarks"):
-                outs[key] = torch.from_numpy(
-                    np.load(sample[key], allow_pickle=True)
-                ).float()
+                if ("horizontal" in key and self.return_horizontal_landmarks) or (
+                    "vertical" in key and self.return_vertical_landmarks
+                ):
+                    outs[key] = torch.from_numpy(
+                        np.load(sample[key], allow_pickle=True)
+                    ).float()
+                
+        # checks if the keys are correct
+        if self.return_horizontal_landmarks and "landmarks_horizontal" not in outs:
+            raise KeyError(
+                "landmarks_horizontal not in outs, but return_horizontal_landmarks is True"
+            )
+        if self.return_vertical_landmarks and "landmarks_vertical" not in outs:
+            raise KeyError(
+                "landmarks_vertical not in outs, but return_vertical_landmarks is True"
+            )
+        if self.return_horizontal_images and "image_horizontal" not in outs:
+            raise KeyError(
+                "image_horizontal not in outs, but return_horizontal_images is True"
+            )
+        if self.return_vertical_images and "image_vertical" not in outs:
+            raise KeyError(
+                "image_vertical not in outs, but return_vertical_images is True"
+            )
+        
+        # returns the outputs
         return outs
 
 
@@ -421,3 +487,35 @@ if __name__ == "__main__":
             print(
                 f"key {k} with shape {tuple(v.shape)} has: min {v.min()}, max {v.max()}, mean {v.mean()}, std {v.std()}"
             )
+
+    # tests
+    for (
+        return_horizontal_images,
+        return_vertical_images,
+        return_horizontal_landmarks,
+        return_vertical_landmarks,
+    ) in tqdm(
+        list(
+            itertools.product(
+                [True, False], [True, False], [True, False], [True, False]
+            )
+        ),
+        desc="trying all modes combinations",
+    ):
+        dataset.set_mode(
+            return_horizontal_images=return_horizontal_images,
+            return_vertical_images=return_vertical_images,
+            return_horizontal_landmarks=return_horizontal_landmarks,
+            return_vertical_landmarks=return_vertical_landmarks,
+        )
+        batch = dataset[
+            0
+        ]  # keys are ['label', 'landmarks_horizontal', 'image_horizontal', 'landmarks_vertical', 'image_vertical']
+        if return_horizontal_images:
+            assert "image_horizontal" in batch, f"keys are {batch.keys()}"
+        if return_vertical_images:
+            assert "image_vertical" in batch
+        if return_horizontal_landmarks:
+            assert "landmarks_horizontal" in batch
+        if return_vertical_landmarks:
+            assert "landmarks_vertical" in batch

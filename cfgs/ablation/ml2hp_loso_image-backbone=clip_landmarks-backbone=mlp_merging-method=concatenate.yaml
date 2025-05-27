@@ -1,0 +1,16 @@
+batch_size: 256
+checkpoints_path: ./checkpoints/ablation
+dataset: ml2hp
+dataset_path: ../../datasets/ml2hp
+device: auto
+image_backbone_name: clip
+landmarks_backbone_name: mlp
+lr: 5.0e-05
+max_epochs: 3
+merging_method: concatenate
+seed: 42
+use_horizontal_image: true
+use_horizontal_landmarks: true
+use_vertical_image: true
+use_vertical_landmarks: true
+validation: loso

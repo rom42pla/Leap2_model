@@ -2,6 +2,7 @@ from abc import abstractmethod
 import itertools
 import math
 from pprint import pprint
+import time
 from types import FunctionType
 import torch
 import torch.nn.functional as F
@@ -9,19 +10,16 @@ import lightning as pl
 import torchmetrics
 from typing import Any, Callable, Tuple
 from torch import nn
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import timm
 from transformers import CLIPVisionModel, AutoModel
+import gc
+
+from datasets.hand_pose_dataset import HandPoseDataset
 
 
 class Model(pl.LightningModule):
-    _possible_data_available = {
-        "only_both_images",
-        "only_one_image",
-        "only_both_landmarks",
-        "only_one_kind_of_landmarks",
-        "both_images_and_landmarks",
-    }
     _possible_landmarks_backbones = {None, "unprocessed", "linear", "mlp"}
     _possible_image_backbones = {None, "resnet", "clip", "dinov2"}
     _possible_merging_methods = {
@@ -33,45 +31,65 @@ class Model(pl.LightningModule):
         self,
         num_labels: int,
         num_landmarks: int,
-        img_channels: int,
         img_size: int,
-        data_available: str = "both_images_and_landmarks",
-        image_backbone_name: str = "clip",
-        landmarks_backbone_name: str = "mlp",
+        use_horizontal_images: bool,
+        use_vertical_images: bool,
+        use_horizontal_landmarks: bool,
+        use_vertical_landmarks: bool,
+        image_backbone_name: str | None = "clip",
+        landmarks_backbone_name: str | None = "mlp",
         merging_method: str = "concatenate",
         h_dim: int = 512,
         lr: float = 5e-5,
         **kwargs,
     ):
         super(Model, self).__init__()
-        assert (
-            data_available in self._possible_data_available
-        ), f"got {data_available}, expected one of {self._possible_data_available}"
-        self.data_available = data_available
-        if "image" in self.data_available:
-            assert (
-                image_backbone_name is not None
-            ), f"got mode '{self.data_available}' but got no image backbone name"
-        if "landmarks" in self.data_available:
-            assert (
-                landmarks_backbone_name is not None
-            ), f"got mode '{self.data_available}' but got no landmarks backbone name"
+        assert isinstance(use_horizontal_images, bool)
+        assert isinstance(use_vertical_images, bool)
+        assert isinstance(use_horizontal_landmarks, bool)
+        assert isinstance(use_vertical_landmarks, bool)
+        self.use_horizontal_images = use_horizontal_images
+        self.use_vertical_images = use_vertical_images
+        self.use_horizontal_landmarks = use_horizontal_landmarks
+        self.use_vertical_landmarks = use_vertical_landmarks
 
+        # parses channels and image size
+        if (self.use_horizontal_images or self.use_vertical_images) and image_backbone_name is None:
+            image_backbone_name = "resnet"
+        self.image_backbone_name = image_backbone_name
+        if not any([self.use_horizontal_images, self.use_vertical_images]):
+            self.img_channels = 0
+            self.img_size = 0
+            image_backbone_name = None
+        else:
+            assert img_size > 0, f"got {img_size=}, expected > 0"
+            self.img_channels = sum([1 if self.use_horizontal_images else 0, 1 if self.use_vertical_images else 0])
+            self.img_size = img_size
+
+        # parses number of landmarks
+        if (self.use_horizontal_landmarks or self.use_vertical_landmarks) and landmarks_backbone_name is None:
+            landmarks_backbone_name = "unprocessed"
+        self.landmarks_backbone_name = landmarks_backbone_name
+        if not any([self.use_horizontal_landmarks, self.use_vertical_landmarks]):
+            self.num_landmarks = 0
+            landmarks_backbone_name = None
+        else:
+            assert num_landmarks > 0, f"got {self.num_landmarks=}, expected > 0"
+            self.num_landmarks = num_landmarks
+        
+
+        # parses number of labels
+        assert isinstance(num_labels, int) and num_labels > 0, num_labels
         self.num_classes = num_labels
-        self.num_landmarks = num_landmarks
-        self.img_channels = img_channels
-        self.img_size = img_size
 
         # model params
         assert isinstance(h_dim, int) and h_dim > 0, h_dim
         self.h_dim = h_dim
 
         # image backbone
-        self.image_backbone_name = image_backbone_name
-        if self.image_backbone_name:
+        if self.use_horizontal_images or self.use_vertical_images:
             self.adapter = nn.Conv2d(
-                in_channels=self.img_channels
-                * (2 if "both" in self.data_available else 1),
+                in_channels=self.img_channels,
                 out_channels=3,
                 kernel_size=11,
                 stride=1,
@@ -82,6 +100,9 @@ class Model(pl.LightningModule):
         )
 
         # landmarks backbone
+        assert (
+            landmarks_backbone_name in self._possible_landmarks_backbones
+        ), f"got {landmarks_backbone_name}, expected one of {self._possible_landmarks_backbones}"
         self.landmarks_backbone_name = landmarks_backbone_name
         (
             self.landmarks_features_size,
@@ -90,6 +111,9 @@ class Model(pl.LightningModule):
         ) = self._parse_landmarks_backbone(name=self.landmarks_backbone_name)
 
         # classifier
+        assert (
+            merging_method in self._possible_merging_methods
+        ), f"got {merging_method}, expected one of {self._possible_merging_methods}"
         self.merging_method_name = merging_method
         (
             self.image_features_embedder,
@@ -160,8 +184,8 @@ class Model(pl.LightningModule):
             raise NotImplementedError(
                 f"got landmarks backbone '{name}', expected one of {self._possible_landmarks_backbones}"
             )
-        landamarks_embedder = lambda landmarks: landmarks_backbone(landmarks)
-        return landmarks_features_size, landmarks_backbone, landamarks_embedder
+        landmarks_embedder = lambda landmarks: landmarks_backbone(landmarks)
+        return landmarks_features_size, landmarks_backbone, landmarks_embedder
 
     def _parse_merging_method(
         self, name
@@ -177,13 +201,28 @@ class Model(pl.LightningModule):
             )
 
             def classify(image_features, landmarks_features):
-                assert (image_features is not None) or (landmarks_features is not None)
+                assert any([image_features is not None, landmarks_features is not None])
                 tensors = []
-                if image_features is not None:
+                if self.use_horizontal_images or self.use_vertical_images:
+                    assert image_features is not None, "there are no image features"
+                    assert (
+                        image_features.shape[1] == self.image_features_size
+                    ), f"got {image_features.shape[1]=}, expected {self.image_features_size=}"
                     tensors.append(image_features)
-                if landmarks_features is not None:
+                if self.use_horizontal_landmarks or self.use_vertical_landmarks:
+                    assert (
+                        landmarks_features is not None
+                    ), "there are no landmarks features"
+                    assert (
+                        landmarks_features.shape[1] == self.landmarks_features_size
+                    ), f"got {landmarks_features.shape[1]=}, expected {self.landmarks_features_size=}"
                     tensors.append(landmarks_features)
-                return cls_head(torch.concatenate(tensors, dim=1))
+                tensors = torch.concatenate(tensors, dim=1)
+                assert tensors.shape[1] == (
+                    self.image_features_size + self.landmarks_features_size
+                ), f"got {tensors.shape[1]=}, expected {self.image_features_size + self.landmarks_features_size=}. Combination is {self.image_backbone_name=} and {self.landmarks_backbone_name=}. Params are {self.use_horizontal_images=}, {self.use_vertical_images=}, {self.use_horizontal_landmarks=}, {self.use_vertical_landmarks=}, {self.use_horizontal_images=}, {self.use_vertical_images=}"
+                assert tensors.shape[0] > 0, f"got {tensors.shape=}"
+                return cls_head(tensors)
 
         elif name == "sum":
             h_dim = max(self.image_features_size, self.landmarks_features_size)
@@ -243,29 +282,35 @@ class Model(pl.LightningModule):
             "imgs_embs": None,
             "landmarks_embs": None,
         }
-        if self.image_backbone_name is not None:
-            t = []
-            if image_horizontal is not None:
-                t.append(image_horizontal)
-            if image_vertical is not None:
-                t.append(image_vertical)
-            # eventually uses just one image
-            if self.data_available == "only_one_image" and len(t) > 1:
-                 t = [t[0]]
-            imgs = torch.cat(t, dim=1).float().to(self.device)
+        # images branch
+        if self.use_horizontal_images:
+            assert image_horizontal is not None, "there are no horizontal images"
+        if self.use_vertical_images:
+            assert image_vertical is not None, "there are no vertical images"
+        if self.use_horizontal_images or self.use_vertical_images:
+            imgs = []
+            if self.use_horizontal_images:
+                imgs.append(image_horizontal)
+            if self.use_vertical_images:
+                imgs.append(image_vertical)
+            imgs = torch.cat(imgs, dim=1).float().to(self.device)
             outs["imgs_embs"] = self.image_embedder(imgs)
 
-        if self.landmarks_backbone_name is not None:
-            t = []
-            if landmarks_horizontal is not None:
-                t.append(landmarks_horizontal)
-            if landmarks_vertical is not None:
-                t.append(landmarks_vertical)
-            # eventually uses just one kind of landmarks
-            if self.data_available == "only_one_kind_of_landmarks" and len(t) > 1:
-                t = [t[0]]
-            landmarks = torch.cat(t, dim=1).float().to(self.device)
+        # landmarks branch
+        if self.use_horizontal_landmarks:
+            assert landmarks_horizontal is not None, "there are no horizontal landmarks"
+        if self.use_vertical_landmarks:
+            assert landmarks_vertical is not None, "there are no vertical landmarks"
+        if self.use_horizontal_landmarks or self.use_vertical_landmarks:
+            landmarks = []
+            if self.use_horizontal_landmarks:
+                landmarks.append(landmarks_horizontal)
+            if self.use_vertical_landmarks:
+                landmarks.append(landmarks_vertical)
+            landmarks = torch.cat(landmarks, dim=1).float().to(self.device)
             outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
+        
+        # merging branch
         outs["cls_logits"] = self.classify(
             image_features=outs["imgs_embs"], landmarks_features=outs["landmarks_embs"]
         )
@@ -273,6 +318,7 @@ class Model(pl.LightningModule):
 
     def step(self, batch, phase):
         outs = self(**batch)
+        batch["label"] = batch["label"].to(self.device)
         outs["loss"] = F.cross_entropy(input=outs["cls_logits"], target=batch["label"])
         if not phase in self.epoch_metrics:
             self.epoch_metrics[phase] = {}
@@ -366,13 +412,6 @@ class Model(pl.LightningModule):
             outs = self.step(batch, phase="test")
         return outs
 
-    # def on_test_epoch_start(self):
-    #     self.epoch_metrics = {
-    #         "cls_labels": [],
-    #         "cls_logits": [],
-    #         "loss": [],
-    #     }
-
     def on_train_epoch_end(self):
         self.on_epoch_end(phase="train")
 
@@ -384,55 +423,22 @@ class Model(pl.LightningModule):
 
 
 if __name__ == "__main__":
+    # define the dataset
+    dataset = HandPoseDataset(dataset_path="../../datasets/ml2hp")
+
     # define params for the tests
     params = {
-        "num_labels": 17,
         "batch_size": 16,
-        "num_landmarks": 242,
-        "img_channels": 1,
-        "img_size": 224,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
     }
 
-    # define a dummy batch
-    dummy_batch = {
-        "landmarks_horizontal": torch.rand(
-            [params["batch_size"], params["num_landmarks"]], device=params["device"]
-        ),
-        "landmarks_vertical": torch.rand(
-            [params["batch_size"], params["num_landmarks"]], device=params["device"]
-        ),
-        "image_horizontal": torch.rand(
-            [
-                params["batch_size"],
-                params["img_channels"],
-                params["img_size"],
-                params["img_size"],
-            ],
-            device=params["device"],
-        ),
-        "image_vertical": torch.rand(
-            [
-                params["batch_size"],
-                params["img_channels"],
-                params["img_size"],
-                params["img_size"],
-            ],
-            device=params["device"],
-        ),
-        "label": torch.zeros(
-            [params["batch_size"], params["num_labels"]], device=params["device"]
-        ),
-    }
     for (
-        data_available,
         landmarks_backbone_name,
         image_backbone_name,
         merging_method,
     ) in tqdm(
         list(
             itertools.product(
-                Model._possible_data_available,
                 Model._possible_landmarks_backbones,
                 Model._possible_image_backbones,
                 Model._possible_merging_methods,
@@ -440,26 +446,106 @@ if __name__ == "__main__":
         ),
         desc="trying all backbones combinations",
     ):
-        if (
-            not (landmarks_backbone_name or image_backbone_name)
-            or ("landmarks" in data_available and not landmarks_backbone_name)
-            or ("image" in data_available and not image_backbone_name)
-        ):
+        # skips incompatible combinations
+        if not (landmarks_backbone_name or image_backbone_name):
             continue
-        # try:
-        print(
-            data_available, image_backbone_name, landmarks_backbone_name, merging_method
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=params["batch_size"],
+            shuffle=False,
+            num_workers=1,
         )
+        batch = dataloader.__iter__().__next__()
         model = Model(
-            data_available=data_available,
+            use_horizontal_images=True,
+            use_vertical_images=True,
+            use_horizontal_landmarks=True,
+            use_vertical_landmarks=True,
+            num_landmarks=dataset.num_landmarks,
+            img_size=dataset.img_size,
+            num_labels=dataset.num_labels,
             image_backbone_name=image_backbone_name,
             landmarks_backbone_name=landmarks_backbone_name,
             merging_method=merging_method,
             **params,
         ).to(params["device"])
-        model.step(batch=dummy_batch, phase="train")
+        model.step(batch=batch, phase="train")
         del model
-        # except Exception as e:
-        #     print(
-        #         f"combination {landmarks_backbone_name, image_backbone_name, merging_method} failed with error {e}"
-        #     )
+        gc.collect()
+        if "cuda" in params["device"]:
+            torch.cuda.empty_cache()
+        time.sleep(1)
+
+
+
+
+
+
+
+
+
+    for (
+
+        use_horizontal_images,
+        use_vertical_images,
+        use_horizontal_landmarks,
+        use_vertical_landmarks,
+    ) in tqdm(list(itertools.product(
+        [True, False], [True, False], [True, False], [True, False]
+    )), desc="trying all modes combinations"):
+        # skips incompatible combinations
+        if (
+            (
+                not any(
+                    [
+                        use_horizontal_images,
+                        use_vertical_images,
+                        use_horizontal_landmarks,
+                        use_vertical_landmarks,
+                    ]
+                )
+            )
+            or (
+                (use_horizontal_images or use_vertical_images)
+                and (image_backbone_name is None)
+            )
+            or (
+                (use_horizontal_landmarks or use_vertical_landmarks)
+                and (landmarks_backbone_name is None)
+            )
+        ):
+            continue
+        dataset.set_mode(
+            return_horizontal_images=use_horizontal_images,
+            return_vertical_images=use_vertical_images,
+            return_horizontal_landmarks=use_horizontal_landmarks,
+            return_vertical_landmarks=use_vertical_landmarks,
+        )
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=params["batch_size"],
+            shuffle=False,
+            num_workers=1,
+        )
+        batch = dataloader.__iter__().__next__()
+        model = Model(
+            use_horizontal_images=dataset.return_horizontal_images,
+            use_vertical_images=dataset.return_vertical_images,
+            use_horizontal_landmarks=dataset.return_horizontal_landmarks,
+            use_vertical_landmarks=dataset.return_vertical_landmarks,
+            num_landmarks=dataset.num_landmarks,
+            img_size=dataset.img_size,
+            num_labels=dataset.num_labels,
+            image_backbone_name="clip",
+            landmarks_backbone_name="linear",
+            merging_method=merging_method,
+            **params,
+        ).to(params["device"])
+        model.step(batch=batch, phase="train")
+        del model
+        gc.collect()
+        if "cuda" in params["device"]:
+            torch.cuda.empty_cache()
+        time.sleep(1)
+    print("All tests passed successfully!")
+            

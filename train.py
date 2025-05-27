@@ -73,6 +73,10 @@ if __name__ == "__main__":
         num_landmarks=dataset.num_landmarks,
         img_channels=dataset.img_channels,
         img_size=dataset.img_size,
+        use_horizontal_images= cfg["use_horizontal_image"],
+        use_vertical_images=cfg["use_vertical_image"],
+        use_horizontal_landmarks=cfg["use_horizontal_landmarks"],
+        use_vertical_landmarks=cfg["use_vertical_landmarks"],
     )
 
     # saves the initial weights of the model
