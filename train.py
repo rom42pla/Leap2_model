@@ -1,3 +1,4 @@
+from copy import deepcopy
 import os
 from os import makedirs
 from os.path import join, splitext, basename
@@ -16,7 +17,7 @@ from tqdm import tqdm
 
 from datasets.hand_pose_dataset import HandPoseDataset
 
-from model import Model
+from model import BWHandGestureRecognitionModel
 from utils import (
     get_device_from_string,
     get_k_fold_runs,
@@ -31,12 +32,19 @@ if __name__ == "__main__":
 
     # arguments parsing
     parser = argparse.ArgumentParser(description="Train a model")
-    parser.add_argument("--cfg", type=str, help="Path to the configuration", required=True)
-    parser.add_argument("--run_name", type=str, help="The name to prepend to the run when logging", required=False)
+    parser.add_argument(
+        "--cfg", type=str, help="Path to the configuration", required=True
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        help="The name to prepend to the run when logging",
+        required=False,
+    )
     line_args = vars(parser.parse_args())
 
     # loads the configuration file
-    num_workers = os.cpu_count() // 2 # type: ignore
+    num_workers = os.cpu_count() // 2  # type: ignore
     with open(line_args["cfg"], "r") as fp:
         cfg = yaml.safe_load(fp)
     pprint(cfg)
@@ -45,8 +53,8 @@ if __name__ == "__main__":
     set_global_seed(seed=cfg["seed"])
 
     # sets the logging folder
-    datetime_str: str = datetime.now().strftime("%Y%m%d_%H%M")
-    experiment_name: str = f"{datetime_str}_{cfg['dataset']}_{cfg['validation']}"
+    datetime_str: str = datetime.now().strftime("%Y%m%d-%H%M")
+    experiment_name: str = f"{cfg['name']}-{datetime_str}"
     experiment_path: str = join(cfg["checkpoints_path"], experiment_name)
     makedirs(experiment_path, exist_ok=True)
 
@@ -68,20 +76,22 @@ if __name__ == "__main__":
 
     # setup the model
     device = get_device_from_string(cfg["device"])  # "cuda" or "cpu"
-    model = Model(
+    model = BWHandGestureRecognitionModel(
         num_labels=dataset.num_labels,
         num_landmarks=dataset.num_landmarks,
         img_channels=dataset.img_channels,
         img_size=dataset.img_size,
-        use_horizontal_images= cfg["use_horizontal_image"],
+        image_backbone_name=cfg["image_backbone_name"],
+        landmarks_backbone_name=cfg["landmarks_backbone_name"],
+        use_horizontal_images=cfg["use_horizontal_image"],
         use_vertical_images=cfg["use_vertical_image"],
         use_horizontal_landmarks=cfg["use_horizontal_landmarks"],
         use_vertical_landmarks=cfg["use_vertical_landmarks"],
     )
 
     # saves the initial weights of the model
-    initial_state_dict_path = join(".", "_initial_state_dict.pth")
-    torch.save({"model_state_dict": model.state_dict()}, initial_state_dict_path)
+    initial_state_dict_path = join(".", "initial_weights.pth")
+    torch.save(model.state_dict(), initial_state_dict_path)
 
     # metas
     date = datetime.now().strftime("%Y%m%d_%H%M")
@@ -90,17 +100,17 @@ if __name__ == "__main__":
     if line_args["run_name"] is not None:
         experiment_name += f"_{line_args['run_name']}"
     # saves the parameters used in the config
-    with open(join(experiment_path, "cfg.yaml"), 'w') as fp:
+    with open(join(experiment_path, "cfg.yaml"), "w") as fp:
         yaml.dump(cfg, fp, default_flow_style=False)
 
     # loops over runs
     for i_run, run in enumerate(runs):
         if cfg["validation"] == "loso":
             print(
-                f"doing run for subject {run['subject_id']} ({((i_run+1)/len(runs)) * 100:.1f}%)" # type: ignore
+                f"doing run for subject {run['subject_id']} ({((i_run+1)/len(runs)) * 100:.1f}%)"  # type: ignore
             )
-            run_name = run['subject_id'] # type: ignore
-            
+            run_name = run["subject_id"]  # type: ignore
+
         else:
             print(
                 f"doing run {i_run+1} of {len(runs)} ({((i_run+1)/len(runs)) * 100:.1f}%)"
@@ -111,7 +121,7 @@ if __name__ == "__main__":
 
         # splits the dataset
         dataloader_train = DataLoader(
-            dataset=Subset(dataset, indices=run["train_idx"]), # type: ignore
+            dataset=Subset(dataset, indices=run["train_idx"]),  # type: ignore
             batch_size=cfg["batch_size"],
             shuffle=True,
             pin_memory=False,
@@ -119,7 +129,7 @@ if __name__ == "__main__":
             persistent_workers=True,
         )
         dataloader_val = DataLoader(
-            dataset=Subset(dataset, indices=run["val_idx"]), # type: ignore
+            dataset=Subset(dataset, indices=run["val_idx"]),  # type: ignore
             batch_size=cfg["batch_size"],
             shuffle=False,
             pin_memory=False,
@@ -128,10 +138,7 @@ if __name__ == "__main__":
         )
 
         # initialize the model
-        model.to("cpu")
-        model.load_state_dict(
-            torch.load(initial_state_dict_path, weights_only=True)["model_state_dict"]
-        )
+        model.load_state_dict(torch.load(initial_state_dict_path, map_location=device), strict=False)
         model.to(device)
 
         wandb_logger = WandbLogger(
@@ -155,6 +162,7 @@ if __name__ == "__main__":
             enable_checkpointing=True,
             default_root_dir=experiment_run_path,
             callbacks=[checkpoint_callback],
+            limit_train_batches=0.1,
         )
         trainer.fit(model, dataloader_train, dataloader_val)
     wandb.finish()

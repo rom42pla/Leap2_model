@@ -13,23 +13,25 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import timm
-from transformers import CLIPVisionModel, AutoModel
+from transformers import AutoModel, CLIPVisionModel, ConvNextV2ForImageClassification
 import gc
+from thop import profile
 
 from datasets.hand_pose_dataset import HandPoseDataset
 
 
-class Model(pl.LightningModule):
+class BWHandGestureRecognitionModel(pl.LightningModule):
     _possible_landmarks_backbones = {None, "linear", "mlp"}
     _possible_image_backbones = {
         None,
-        "resnet",
-        "convnext",
-        "clip_t",
-        "clip_b",
-        "dinov2_t",
-        "dinov2_b",
-    }  # TODO add models
+        "resnet18",
+        "convnextv2-t",
+        "convnextv2-b",
+        "clip-b",
+        "dinov2-s",
+        "dinov2-b",
+    }
+    _dont_save_image_backbone = True
 
     def __init__(
         self,
@@ -40,14 +42,12 @@ class Model(pl.LightningModule):
         use_vertical_images: bool,
         use_horizontal_landmarks: bool,
         use_vertical_landmarks: bool,
-        image_backbone_name: str | None = "clip",
-        landmarks_backbone_name: str | None = "mlp",
-        merging_method: str = "concatenate",
-        h_dim: int = 512,
+        image_backbone_name: str | None = "resnet18",
+        landmarks_backbone_name: str | None = "linear",
         lr: float = 5e-5,
         **kwargs,
     ):
-        super(Model, self).__init__()
+        super(BWHandGestureRecognitionModel, self).__init__()
         assert isinstance(use_horizontal_images, bool)
         assert isinstance(use_vertical_images, bool)
         assert isinstance(use_horizontal_landmarks, bool)
@@ -61,7 +61,7 @@ class Model(pl.LightningModule):
         if (
             self.use_horizontal_images or self.use_vertical_images
         ) and image_backbone_name is None:
-            image_backbone_name = "resnet"
+            image_backbone_name = "resnet18"
         self.image_backbone_name = image_backbone_name
         if not any([self.use_horizontal_images, self.use_vertical_images]):
             self.img_channels = 0
@@ -81,7 +81,7 @@ class Model(pl.LightningModule):
         if (
             self.use_horizontal_landmarks or self.use_vertical_landmarks
         ) and landmarks_backbone_name is None:
-            landmarks_backbone_name = "unprocessed"
+            landmarks_backbone_name = "linear"
         self.landmarks_backbone_name = landmarks_backbone_name
         if not any([self.use_horizontal_landmarks, self.use_vertical_landmarks]):
             self.num_landmarks = 0
@@ -93,10 +93,6 @@ class Model(pl.LightningModule):
         # parses number of labels
         assert isinstance(num_labels, int) and num_labels > 0, num_labels
         self.num_classes = num_labels
-
-        # model params
-        assert isinstance(h_dim, int) and h_dim > 0, h_dim
-        self.h_dim = h_dim
 
         # image backbone
         if self.use_horizontal_images or self.use_vertical_images:
@@ -123,16 +119,12 @@ class Model(pl.LightningModule):
         ) = self._parse_landmarks_backbone(name=self.landmarks_backbone_name)
 
         # classifier
-        assert (
-            merging_method in self._possible_merging_methods
-        ), f"got {merging_method}, expected one of {self._possible_merging_methods}"
-        self.merging_method_name = merging_method
         (
             self.image_features_embedder,
             self.landmarks_features_embedder,
             self.cls_head,
             self.classify,
-        ) = self._parse_merging_method(name=self.merging_method_name)
+        ) = self._parse_merging_method(name="concatenate")
 
         # optimizer params
         assert lr > 0
@@ -149,12 +141,26 @@ class Model(pl.LightningModule):
         ), f"got {name}, expected one of {self._possible_image_backbones}"
         if name is None:
             return 0, nn.Identity(), nn.Identity()
-        elif name == "resnet":
+        elif name == "resnet18":
             image_features_size = 512
             image_backbone = timm.create_model("resnet18.a1_in1k", pretrained=True)
             image_backbone.fc = nn.Identity()
             image_embedder = lambda imgs: image_backbone(self.adapter(imgs))
-        elif name == "clip":
+        elif name == "convnextv2_t":
+            image_features_size = 768
+            image_backbone = ConvNextV2ForImageClassification.from_pretrained(
+                "facebook/convnextv2-tiny-22k-224"
+            )
+            image_backbone.classifier = nn.Identity()
+            image_embedder = lambda imgs: image_backbone(self.adapter(imgs)).logits
+        elif name == "convnextv2_b":
+            image_features_size = 1024
+            image_backbone = ConvNextV2ForImageClassification.from_pretrained(
+                "facebook/convnextv2-base-22k-224"
+            )
+            image_backbone.classifier = nn.Identity()
+            image_embedder = lambda imgs: image_backbone(self.adapter(imgs)).logits
+        elif name == "clip_b":
             image_features_size = 768
             image_backbone = CLIPVisionModel.from_pretrained(
                 "openai/clip-vit-base-patch32"
@@ -162,7 +168,13 @@ class Model(pl.LightningModule):
             image_embedder = lambda imgs: image_backbone(
                 pixel_values=self.adapter(imgs)
             ).pooler_output
-        elif name == "dinov2":
+        elif name == "dinov2_s":
+            image_features_size = 384
+            image_backbone = AutoModel.from_pretrained("facebook/dinov2-small")
+            image_embedder = lambda imgs: image_backbone(
+                pixel_values=self.adapter(imgs)
+            ).pooler_output
+        elif name == "dinov2_b":
             image_features_size = 768
             image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
             image_embedder = lambda imgs: image_backbone(
@@ -175,6 +187,7 @@ class Model(pl.LightningModule):
         # freezes the backbone
         for param in image_backbone.parameters():
             param.requires_grad = False
+        # print(f"{name=} has {sum([p.numel() for p in image_backbone.parameters()])/1e6} parameters")
         return image_features_size, image_backbone, image_embedder
 
     def _parse_landmarks_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
@@ -219,7 +232,7 @@ class Model(pl.LightningModule):
                     assert image_features is not None, "there are no image features"
                     assert (
                         image_features.shape[1] == self.image_features_size
-                    ), f"got {image_features.shape[1]=}, expected {self.image_features_size=}"
+                    ), f"got {image_features.shape[1]=} with {self.image_backbone_name=}, expected {self.image_features_size=}"
                     tensors.append(image_features)
                 if self.use_horizontal_landmarks or self.use_vertical_landmarks:
                     assert (
@@ -232,34 +245,24 @@ class Model(pl.LightningModule):
                 tensors = torch.concatenate(tensors, dim=1)
                 assert tensors.shape[1] == (
                     self.image_features_size + self.landmarks_features_size
-                ), f"got {tensors.shape[1]=}, expected {self.image_features_size + self.landmarks_features_size=}. Combination is {self.image_backbone_name=} and {self.landmarks_backbone_name=}. Params are {self.use_horizontal_images=}, {self.use_vertical_images=}, {self.use_horizontal_landmarks=}, {self.use_vertical_landmarks=}, {self.use_horizontal_images=}, {self.use_vertical_images=}"
+                ), f"got {tensors.shape[1]=}, expected {self.image_features_size + self.landmarks_features_size=}. Combination is {self.image_backbone_name=} and {self.landmarks_backbone_name=}. Params are {self.use_horizontal_images=}, {self.use_vertical_images=}, {self.use_horizontal_landmarks=}, {self.use_vertical_landmarks=}"
                 assert tensors.shape[0] > 0, f"got {tensors.shape=}"
                 return cls_head(tensors)
-
-        elif name == "sum":
-            h_dim = max(self.image_features_size, self.landmarks_features_size)
-            cls_head = nn.Linear(h_dim, self.num_classes)
-            if self.image_features_size != h_dim:
-                image_features_embedder = nn.Linear(self.image_features_size, h_dim)
-            elif self.landmarks_features_size != h_dim:
-                landmarks_features_embedder = nn.Linear(
-                    self.landmarks_features_size, h_dim
-                )
-
-            def classify(image_features, landmarks_features):
-                assert (image_features is not None) or (landmarks_features is not None)
-                tensors = []
-                if image_features is not None:
-                    tensors.append(image_features_embedder(image_features))
-                if landmarks_features is not None:
-                    tensors.append(landmarks_features_embedder(landmarks_features))
-                return cls_head(sum(tensors))
 
         else:
             raise NotImplementedError(
                 f"merging method {self._merging_method} not implemented"
             )
         return image_features_embedder, landmarks_features_embedder, cls_head, classify
+
+    def save_checkpoint(self, path: str) -> None:
+        """
+        Saves the model checkpoint to the specified path.
+        """
+        checkpoint = self.state_dict()
+        if self._dont_save_image_backbone:
+            self.on_save_checkpoint(checkpoint)
+        torch.save(checkpoint, path)
 
     def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         keys_to_pop = []
@@ -328,8 +331,23 @@ class Model(pl.LightningModule):
         )
         return outs
 
-    def step(self, batch, phase):
-        outs = self(**batch)
+    def step(self, batch, phase, batch_idx=None):
+        # Track time, params, MACs, and FLOPs only for the first batch of the first epoch
+        if batch_idx == 0 and self.current_epoch == 0 and phase in {"val", "test"}:
+            start_time = time.time()
+            outs = self(**batch)
+            elapsed = time.time() - start_time
+            self.log(f"batch_time", elapsed, prog_bar=True)
+
+            # Number of parameters
+            num_params = sum(p.numel() for p in self.parameters())
+            self.log(f"num_params", num_params, prog_bar=True)
+
+            # MACs and FLOPs (using thop)
+            # TODO
+        else:
+            outs = self(**batch)
+
         batch["label"] = batch["label"].to(self.device)
         outs["loss"] = F.cross_entropy(input=outs["cls_logits"], target=batch["label"])
         if not phase in self.epoch_metrics:
@@ -411,17 +429,17 @@ class Model(pl.LightningModule):
         del self.epoch_metrics[phase]
 
     def training_step(self, batch, batch_idx):
-        outs = self.step(batch, phase="train")
+        outs = self.step(batch, batch_idx=batch_idx, phase="train")
         return outs
 
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            outs = self.step(batch, phase="val")
+            outs = self.step(batch, batch_idx=batch_idx, phase="val")
         return outs
 
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
-            outs = self.step(batch, phase="test")
+            outs = self.step(batch, batch_idx=batch_idx, phase="test")
         return outs
 
     def on_train_epoch_end(self):
@@ -447,13 +465,11 @@ if __name__ == "__main__":
     for (
         landmarks_backbone_name,
         image_backbone_name,
-        merging_method,
     ) in tqdm(
         list(
             itertools.product(
-                Model._possible_landmarks_backbones,
-                Model._possible_image_backbones,
-                Model._possible_merging_methods,
+                BWHandGestureRecognitionModel._possible_landmarks_backbones,
+                BWHandGestureRecognitionModel._possible_image_backbones,
             )
         ),
         desc="trying all backbones combinations",
@@ -468,7 +484,7 @@ if __name__ == "__main__":
             num_workers=1,
         )
         batch = dataloader.__iter__().__next__()
-        model = Model(
+        model = BWHandGestureRecognitionModel(
             use_horizontal_images=True,
             use_vertical_images=True,
             use_horizontal_landmarks=True,
@@ -478,7 +494,6 @@ if __name__ == "__main__":
             num_labels=dataset.num_labels,
             image_backbone_name=image_backbone_name,
             landmarks_backbone_name=landmarks_backbone_name,
-            merging_method=merging_method,
             **params,
         ).to(params["device"])
         model.step(batch=batch, phase="train")
@@ -536,7 +551,7 @@ if __name__ == "__main__":
             num_workers=1,
         )
         batch = dataloader.__iter__().__next__()
-        model = Model(
+        model = BWHandGestureRecognitionModel(
             use_horizontal_images=dataset.return_horizontal_images,
             use_vertical_images=dataset.return_vertical_images,
             use_horizontal_landmarks=dataset.return_horizontal_landmarks,
@@ -544,9 +559,12 @@ if __name__ == "__main__":
             num_landmarks=dataset.num_landmarks,
             img_size=dataset.img_size,
             num_labels=dataset.num_labels,
-            image_backbone_name="clip",
-            landmarks_backbone_name="linear",
-            merging_method=merging_method,
+            image_backbone_name=(
+                "clip_b" if use_horizontal_images or use_vertical_images else None
+            ),
+            landmarks_backbone_name=(
+                "mlp" if use_horizontal_landmarks or use_vertical_landmarks else None
+            ),
             **params,
         ).to(params["device"])
         model.step(batch=batch, phase="train")

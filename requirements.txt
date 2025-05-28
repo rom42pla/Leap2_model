@@ -15,4 +15,5 @@ torchmetrics
 lightning[extra]
 transformers==4.46.3
 timm==1.0.15
+thop
 wandb
