@@ -4,6 +4,7 @@ import itertools
 import os
 from os import makedirs, listdir
 from os.path import join, isdir, exists
+import shutil
 import pandas as pd
 import polars as pl
 from PIL import Image
@@ -15,6 +16,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 from tqdm import tqdm
+import yaml
 
 
 class HandPoseDataset(Dataset):
@@ -25,14 +27,14 @@ class HandPoseDataset(Dataset):
         dataset_path,
         preprocessed_landmarks_path="_preprocessed_landmarks",
         images_needed="left",
-        img_size=224,
+        img_size=512,
         normalize_landmarks=True,
     ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
         assert images_needed in self._possible_images_needed
         self.images_needed = images_needed
-        self.normalize_landmarks = True
+        self.normalize_landmarks = normalize_landmarks
 
         self.poses_dict = {
             "Dislike": 0,
@@ -55,6 +57,16 @@ class HandPoseDataset(Dataset):
         }
 
         self.preprocessed_dataset_path = preprocessed_landmarks_path
+        if isdir(self.preprocessed_dataset_path):
+            if not exists(join(self.preprocessed_dataset_path, "info.yaml")):
+                raise FileNotFoundError(
+                    f"info.yaml not found in {self.preprocessed_dataset_path}. Please delete the folder and run again."
+                )
+            with open(join(self.preprocessed_dataset_path, "info.yaml"), "r") as fp:
+                info = yaml.safe_load(fp)
+            if info['normalized_landmarks'] != self.normalize_landmarks:
+                shutil.rmtree(self.preprocessed_dataset_path)
+                print("rebuilding the preprocessed dataset because of different normalization")
         if not exists(self.preprocessed_dataset_path):
             makedirs(self.preprocessed_dataset_path)
             # parses the cleaned landmarks
@@ -87,9 +99,12 @@ class HandPoseDataset(Dataset):
                 self.dataset_path,
                 self.preprocessed_dataset_path,
             )
-            # self.save_compressed_images_on_disk(
-            #     self.df_landmarks_prep, self.preprocessed_dataset_path
-            # )
+            # saves the info about the dataset
+            info = {
+                "normalized_landmarks": self.normalize_landmarks,
+            }
+            with open(join(self.preprocessed_dataset_path, "info.yaml"), "w") as fp:
+                yaml.dump(info, fp, default_flow_style=False)
 
         # loads the infos for each sample
         self.samples = self.parse_samples(

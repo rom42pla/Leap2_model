@@ -15,7 +15,7 @@ from tqdm import tqdm
 import timm
 from transformers import AutoModel, CLIPVisionModel, ConvNextV2ForImageClassification
 import gc
-from thop import profile
+import torchvision.transforms as T
 
 from datasets.hand_pose_dataset import HandPoseDataset
 
@@ -37,7 +37,6 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self,
         num_labels: int,
         num_landmarks: int,
-        img_size: int,
         use_horizontal_images: bool,
         use_vertical_images: bool,
         use_horizontal_landmarks: bool,
@@ -45,6 +44,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         image_backbone_name: str | None = "resnet18",
         landmarks_backbone_name: str | None = "linear",
         lr: float = 5e-5,
+        dropout_p: float = 0.2,
         **kwargs,
     ):
         super(BWHandGestureRecognitionModel, self).__init__()
@@ -56,8 +56,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.use_vertical_images = use_vertical_images
         self.use_horizontal_landmarks = use_horizontal_landmarks
         self.use_vertical_landmarks = use_vertical_landmarks
+        self.dropout_p = dropout_p
 
-        # parses channels and image size
+        # parses channels
         if (
             self.use_horizontal_images or self.use_vertical_images
         ) and image_backbone_name is None:
@@ -65,17 +66,14 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.image_backbone_name = image_backbone_name
         if not any([self.use_horizontal_images, self.use_vertical_images]):
             self.img_channels = 0
-            self.img_size = 0
             image_backbone_name = None
         else:
-            assert img_size > 0, f"got {img_size=}, expected > 0"
             self.img_channels = sum(
                 [
                     1 if self.use_horizontal_images else 0,
                     1 if self.use_vertical_images else 0,
                 ]
             )
-            self.img_size = img_size
 
         # parses number of landmarks
         if (
@@ -96,16 +94,22 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
 
         # image backbone
         if self.use_horizontal_images or self.use_vertical_images:
-            self.adapter = nn.Conv2d(
-                in_channels=self.img_channels,
-                out_channels=3,
-                kernel_size=11,
-                stride=1,
-                padding="same",
+            self.adapter = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=self.img_channels,
+                    out_channels=3,
+                    kernel_size=11,
+                    stride=1,
+                    padding="same",
+                ),
+                nn.Dropout2d(self.dropout_p),
             )
-        self.image_features_size, self.image_backbone, self.image_embedder = (
-            self._parse_image_backbone(name=self.image_backbone_name)
-        )
+        (
+            self.image_features_size,
+            self.img_size,
+            self.image_backbone,
+            self.image_embedder,
+        ) = self._parse_image_backbone(name=self.image_backbone_name)
 
         # landmarks backbone
         assert (
@@ -135,50 +139,56 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.save_hyperparameters(ignore=["epoch_metrics"])
 
     # returns image features size, the image backbone and the function to call the backbone
-    def _parse_image_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
+    def _parse_image_backbone(self, name) -> Tuple[int, int, nn.Module, Callable]:
         assert (
             name in self._possible_image_backbones
         ), f"got {name}, expected one of {self._possible_image_backbones}"
         if name is None:
-            return 0, nn.Identity(), nn.Identity()
+            return 0, 0, nn.Identity(), nn.Identity()
         elif name == "resnet18":
             image_features_size = 512
             image_backbone = timm.create_model("resnet18.a1_in1k", pretrained=True)
             image_backbone.fc = nn.Identity()
-            image_embedder = lambda imgs: image_backbone(self.adapter(imgs))
-        elif name == "convnextv2_t":
+            image_size = 288
+            image_embedder = lambda imgs: image_backbone(imgs)
+        elif name == "convnextv2-t":
             image_features_size = 768
             image_backbone = ConvNextV2ForImageClassification.from_pretrained(
                 "facebook/convnextv2-tiny-22k-224"
             )
             image_backbone.classifier = nn.Identity()
-            image_embedder = lambda imgs: image_backbone(self.adapter(imgs)).logits
-        elif name == "convnextv2_b":
+            image_size = 224
+            image_embedder = lambda imgs: image_backbone(imgs).logits
+        elif name == "convnextv2-b":
             image_features_size = 1024
             image_backbone = ConvNextV2ForImageClassification.from_pretrained(
                 "facebook/convnextv2-base-22k-224"
             )
             image_backbone.classifier = nn.Identity()
-            image_embedder = lambda imgs: image_backbone(self.adapter(imgs)).logits
-        elif name == "clip_b":
+            image_size = 224
+            image_embedder = lambda imgs: image_backbone(imgs).logits
+        elif name == "clip-b":
             image_features_size = 768
             image_backbone = CLIPVisionModel.from_pretrained(
                 "openai/clip-vit-base-patch32"
             )
+            image_size = 224
             image_embedder = lambda imgs: image_backbone(
-                pixel_values=self.adapter(imgs)
+                pixel_values=imgs
             ).pooler_output
-        elif name == "dinov2_s":
+        elif name == "dinov2-s":
             image_features_size = 384
             image_backbone = AutoModel.from_pretrained("facebook/dinov2-small")
+            image_size = 224
             image_embedder = lambda imgs: image_backbone(
-                pixel_values=self.adapter(imgs)
+                pixel_values=imgs
             ).pooler_output
-        elif name == "dinov2_b":
+        elif name == "dinov2-b":
             image_features_size = 768
             image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
+            image_size = 224
             image_embedder = lambda imgs: image_backbone(
-                pixel_values=self.adapter(imgs)
+                pixel_values=imgs
             ).pooler_output
         else:
             raise NotImplementedError(
@@ -187,8 +197,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         # freezes the backbone
         for param in image_backbone.parameters():
             param.requires_grad = False
+        image_backbone.eval()
         # print(f"{name=} has {sum([p.numel() for p in image_backbone.parameters()])/1e6} parameters")
-        return image_features_size, image_backbone, image_embedder
+        return image_features_size, image_size, image_backbone, image_embedder
 
     def _parse_landmarks_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
         landmarks_features_size = 768
@@ -203,6 +214,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             landmarks_backbone = nn.Sequential(
                 nn.Linear(self.num_landmarks, 512 * 4),
                 nn.LeakyReLU(),
+                nn.Dropout(self.dropout_p),
                 nn.Linear(512 * 4, landmarks_features_size),
             )
         else:
@@ -220,9 +232,12 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             nn.Identity(),
         )
         if name == "concatenate":
-            cls_head = nn.Linear(
-                self.image_features_size + self.landmarks_features_size,
-                self.num_classes,
+            cls_head = nn.Sequential(
+                nn.Dropout(self.dropout_p),
+                nn.Linear(
+                    self.image_features_size + self.landmarks_features_size,
+                    self.num_classes,
+                ),
             )
 
             def classify(image_features, landmarks_features):
@@ -273,12 +288,15 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             del checkpoint["state_dict"][module_name]
 
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
-        self.image_features_size, self.image_backbone, self.image_embedder = (
-            self._parse_image_backbone(name=self.image_backbone_name)
-        )
+        (
+            self.image_features_size,
+            self.image_size,
+            self.image_backbone,
+            self.image_embedder,
+        ) = self._parse_image_backbone(name=self.image_backbone_name)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=5e-4)
         return optimizer
 
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
@@ -309,7 +327,24 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             if self.use_vertical_images:
                 imgs.append(image_vertical)
             imgs = torch.cat(imgs, dim=1).float().to(self.device)
-            outs["imgs_embs"] = self.image_embedder(imgs)
+            if self.training:
+                image_transforms = T.Compose(
+                    [
+                        T.Resize(int(self.img_size * 1.5)),
+                        T.RandomCrop(self.img_size),
+                        T.RandomHorizontalFlip(p=0.5),
+                        T.RandomRotation(10),
+                    ]
+                )
+            else:
+                image_transforms = T.Compose(
+                    [
+                        T.Resize(self.img_size),
+                    ]
+                )
+            outs["imgs_embs"] = self.image_embedder(
+                self.adapter(image_transforms(imgs))
+            )
 
         # landmarks branch
         if self.use_horizontal_landmarks:
@@ -560,7 +595,7 @@ if __name__ == "__main__":
             img_size=dataset.img_size,
             num_labels=dataset.num_labels,
             image_backbone_name=(
-                "clip_b" if use_horizontal_images or use_vertical_images else None
+                "clip-b" if use_horizontal_images or use_vertical_images else None
             ),
             landmarks_backbone_name=(
                 "mlp" if use_horizontal_landmarks or use_vertical_landmarks else None

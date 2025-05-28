@@ -38,6 +38,7 @@ def create_dict(
     use_vertical_image=True,
     use_horizontal_landmarks=True,
     use_vertical_landmarks=True,
+    normalize_landmarks=True,
     image_backbone_name="clip",
     landmarks_backbone_name="mlp",
     checkpoints_path="./checkpoints",
@@ -49,6 +50,7 @@ def create_dict(
         "name": f"{dataset}_{validation}_{image_backbone_name}_{landmarks_backbone_name}",
         "dataset": dataset,
         "dataset_path": join(datasets_path, dataset),
+        "normalize_landmarks": normalize_landmarks,
         "device": device,
         "seed": seed,
         "validation": validation,
@@ -75,6 +77,7 @@ for image_backbone_name, landmarks_backbone_name in itertools.product(BWHandGest
     cfg = create_dict(
         dataset="ml2hp",
         datasets_path=line_args["datasets_path"],
+        normalize_landmarks=True,
         image_backbone_name=image_backbone_name,
         landmarks_backbone_name=landmarks_backbone_name,
         checkpoints_path="./checkpoints/ablation",
