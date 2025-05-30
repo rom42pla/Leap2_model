@@ -8,6 +8,7 @@ landmarks_backbone_name: linear
 lr: 5.0e-05
 max_epochs: 3
 name: ml2hp_loso_dinov2-b_linear
+normalize_landmarks: true
 seed: 42
 use_horizontal_image: true
 use_horizontal_landmarks: true

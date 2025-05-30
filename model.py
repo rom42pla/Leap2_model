@@ -93,23 +93,25 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.num_classes = num_labels
 
         # image backbone
-        if self.use_horizontal_images or self.use_vertical_images:
-            self.adapter = nn.Sequential(
-                nn.Conv2d(
-                    in_channels=self.img_channels,
-                    out_channels=3,
-                    kernel_size=11,
-                    stride=1,
-                    padding="same",
-                ),
-                nn.Dropout2d(self.dropout_p),
-            )
+        # if self.use_horizontal_images or self.use_vertical_images:
+        #     self.adapter = nn.Sequential(
+        #         nn.Conv2d(
+        #             in_channels=self.img_channels,
+        #             out_channels=3,
+        #             kernel_size=11,
+        #             stride=1,
+        #             padding="same",
+        #         ),
+        #         nn.Dropout2d(self.dropout_p),
+        #     )
         (
             self.image_features_size,
             self.img_size,
             self.image_backbone,
             self.image_embedder,
         ) = self._parse_image_backbone(name=self.image_backbone_name)
+        self.adapter = self._parse_image_adapter(name=self.image_backbone_name)
+        self._plug_adapter(name=self.image_backbone_name)
 
         # landmarks backbone
         assert (
@@ -138,6 +140,58 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
 
         self.save_hyperparameters(ignore=["epoch_metrics"])
 
+    def _parse_image_adapter(self, name) -> nn.Module:
+        assert (
+            name in self._possible_image_backbones
+        ), f"got {name}, expected one of {self._possible_image_backbones}"
+        if name is None:
+            return nn.Identity()
+        elif name == "resnet18":
+            out_channels, kernel_size, stride, padding, bias = 64, 7, 2, 3, False
+        elif name == "convnextv2-t":
+            out_channels, kernel_size, stride, padding, bias = 96, 4, 4, 0, False
+        elif name == "convnextv2-b":
+            out_channels, kernel_size, stride, padding, bias = 128, 4, 4, 0, False
+        elif name == "clip-b":
+            out_channels, kernel_size, stride, padding, bias = 768, 32, 32, 0, False
+        elif name == "dinov2-s":
+            out_channels, kernel_size, stride,  padding, bias = 384, 14, 14, 0, False
+        elif name == "dinov2-b":
+            out_channels, kernel_size, stride,  padding, bias = 768, 14, 14, 0, False
+        else:
+            raise NotImplementedError(
+                f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
+            )
+        return nn.Conv2d(
+            in_channels=self.img_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=bias,
+        )
+
+    def _plug_adapter(self, name):
+        if name is None:
+            return nn.Identity()
+        elif name == "resnet18":
+            self.image_backbone.conv1 = self.adapter
+        elif name in {"convnextv2-t", "convnextv2-b"}:
+            self.image_backbone.config.num_channels = self.img_channels
+            self.image_backbone.convnextv2.embeddings.num_channels = self.img_channels
+            self.image_backbone.convnextv2.embeddings.patch_embeddings = self.adapter
+        elif name == "clip-b":
+            self.image_backbone.vision_model.embeddings.patch_embedding = self.adapter
+            self.image_backbone.config.num_channels = self.img_channels
+        elif name in {"dinov2-s", "dinov2-b"}:
+            self.image_backbone.config.num_channels = self.img_channels
+            self.image_backbone.embeddings.patch_embeddings.num_channels = self.img_channels
+            self.image_backbone.embeddings.patch_embeddings.projection = self.adapter
+        else:
+            raise NotImplementedError(
+                f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
+            )
+    
     # returns image features size, the image backbone and the function to call the backbone
     def _parse_image_backbone(self, name) -> Tuple[int, int, nn.Module, Callable]:
         assert (
@@ -282,7 +336,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
     def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         keys_to_pop = []
         for module_name in checkpoint["state_dict"].keys():
-            if module_name.startswith("_image_backbone"):
+            if module_name.startswith("image_backbone") and not "adapter" in module_name:
                 keys_to_pop.append(module_name)
         for module_name in keys_to_pop:
             del checkpoint["state_dict"][module_name]
@@ -294,6 +348,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             self.image_backbone,
             self.image_embedder,
         ) = self._parse_image_backbone(name=self.image_backbone_name)
+        self._plug_adapter(name=self.image_backbone_name)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=5e-4)
@@ -342,9 +397,8 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
                         T.Resize(self.img_size),
                     ]
                 )
-            outs["imgs_embs"] = self.image_embedder(
-                self.adapter(image_transforms(imgs))
-            )
+            self.image_backbone.eval()
+            outs["imgs_embs"] = self.image_embedder(image_transforms(imgs))
 
         # landmarks branch
         if self.use_horizontal_landmarks:

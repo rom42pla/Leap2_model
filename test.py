@@ -46,6 +46,7 @@ if __name__ == "__main__":
     # sets up the dataset(s)
     dataset = HandPoseDataset(
         dataset_path=cfg["dataset_path"],
+        normalize_landmarks=cfg["normalize_landmarks"],
     )
 
     # sets up the validation scheme

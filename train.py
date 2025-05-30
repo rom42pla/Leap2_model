@@ -163,7 +163,6 @@ if __name__ == "__main__":
             enable_checkpointing=True,
             default_root_dir=experiment_run_path,
             callbacks=[checkpoint_callback],
-            limit_train_batches=0.1,
         )
         trainer.fit(model, dataloader_train, dataloader_val)
     wandb.finish()

@@ -8,6 +8,7 @@ landmarks_backbone_name: null
 lr: 5.0e-05
 max_epochs: 3
 name: ml2hp_loso_None_None
+normalize_landmarks: true
 seed: 42
 use_horizontal_image: false
 use_horizontal_landmarks: false
