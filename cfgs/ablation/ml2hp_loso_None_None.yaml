@@ -5,8 +5,8 @@ dataset_path: ../../datasets/ml2hp
 device: auto
 image_backbone_name: null
 landmarks_backbone_name: null
-lr: 5.0e-05
-max_epochs: 3
+lr: 0.0001
+max_epochs: 1
 name: ml2hp_loso_None_None
 normalize_landmarks: true
 seed: 42

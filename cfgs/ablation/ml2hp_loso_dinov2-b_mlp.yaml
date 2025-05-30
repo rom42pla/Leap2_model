@@ -5,8 +5,8 @@ dataset_path: ../../datasets/ml2hp
 device: auto
 image_backbone_name: dinov2-b
 landmarks_backbone_name: mlp
-lr: 5.0e-05
-max_epochs: 3
+lr: 0.0001
+max_epochs: 1
 name: ml2hp_loso_dinov2-b_mlp
 normalize_landmarks: true
 seed: 42

@@ -36,6 +36,9 @@ if __name__ == "__main__":
         "--cfg", type=str, help="Path to the configuration", required=True
     )
     parser.add_argument(
+        "--disable_checkpointing", default=False, action="store_true", help="Whether not to save model's weights"
+    )
+    parser.add_argument(
         "--run_name",
         type=str,
         help="The name to prepend to the run when logging",
@@ -162,9 +165,24 @@ if __name__ == "__main__":
             enable_model_summary=True,
             enable_checkpointing=True,
             default_root_dir=experiment_run_path,
+            limit_train_batches=0.1,
             callbacks=[checkpoint_callback],
         )
         trainer.fit(model, dataloader_train, dataloader_val)
+
+        # compute metrics using the final model
+        model = BWHandGestureRecognitionModel.load_from_checkpoint(
+            checkpoint_callback.best_model_path,
+            map_location=device,
+            strict=False,
+        )
+        metrics = trainer.test(model, dataloader_val)
+        with open(join(experiment_run_path, "metrics.yaml"), "w") as fp:
+            yaml.dump(metrics, fp, default_flow_style=False)
+        # eventually removes the checkpoint
+        if line_args["disable_checkpointing"]:
+            os.remove(checkpoint_callback.best_model_path)
+
     wandb.finish()
 
     # frees some memory
