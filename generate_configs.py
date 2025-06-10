@@ -6,33 +6,12 @@ import yaml
 
 from model import BWHandGestureRecognitionModel
 
-# parses line args
-parser = argparse.ArgumentParser(
-    prog="Leap2 Model", description="Generate configs for the pipeline"
-)
-parser.add_argument(
-    "--path", default=join(".", "cfgs"), help="Where to save the configs"
-)
-parser.add_argument(
-    "--datasets_path",
-    default=join("..", "..", "datasets"),
-    help="Where the datasets are located",
-)
-parser.add_argument("--batch_size", default=256)
-parser.add_argument("--lr", default=1e-4)
-parser.add_argument("--max_epochs", default=1)
-parser.add_argument("--seed", default=42)
-line_args = vars(parser.parse_args())
-
-# creates the directory
-makedirs(line_args["path"], exist_ok=True)
-
 
 def create_dict(
     dataset,
     datasets_path,
     device="auto",
-    seed=line_args["seed"],
+    seed=42,
     validation="loso",
     use_horizontal_image=True,
     use_vertical_image=True,
@@ -42,9 +21,9 @@ def create_dict(
     image_backbone_name="clip",
     landmarks_backbone_name="mlp",
     checkpoints_path="./checkpoints",
-    batch_size=line_args["batch_size"],
-    max_epochs=line_args["max_epochs"],
-    lr=line_args["lr"],
+    batch_size=128,
+    max_epochs=3,
+    lr=1e-5,
 ):
     return {
         "name": f"{dataset}_{validation}_{image_backbone_name}_{landmarks_backbone_name}",
@@ -67,28 +46,43 @@ def create_dict(
     }
 
 
-# defines the parameters
-datasets = ["ml2hp"]
-validations = ["loso"]
+def main(
+    dataset,
+    datasets_path=".",
+    cfg_path="./cfgs",
+    batch_size=128,
+):
+    # defines the parameters
+    datasets = ["ml2hp"]
+    validations = ["loso"]
 
-# creates the ablation configurations
-makedirs(join(line_args["path"], "ablation"), exist_ok=True)
-for image_backbone_name, landmarks_backbone_name in itertools.product(BWHandGestureRecognitionModel._possible_image_backbones, BWHandGestureRecognitionModel._possible_landmarks_backbones):
-    cfg = create_dict(
-        dataset="ml2hp",
-        datasets_path=line_args["datasets_path"],
-        normalize_landmarks=True,
-        image_backbone_name=image_backbone_name,
-        landmarks_backbone_name=landmarks_backbone_name,
-        checkpoints_path="./checkpoints/ablation",
-        use_horizontal_image=True if image_backbone_name is not None else False,
-        use_vertical_image=True if image_backbone_name is not None else False,
-        use_horizontal_landmarks=True if landmarks_backbone_name is not None else False,
-        use_vertical_landmarks=True if landmarks_backbone_name is not None else False,
-    )
-    filename = f"{cfg['name']}.yaml"
-    with open(join(line_args["path"], "ablation", filename), "w") as file:
-        yaml.dump(cfg, file)
+    # creates the ablation configurations
+    makedirs(join(cfg_path, "ablation"), exist_ok=True)
+    for image_backbone_name, landmarks_backbone_name in itertools.product(
+        BWHandGestureRecognitionModel._possible_image_backbones,
+        BWHandGestureRecognitionModel._possible_landmarks_backbones,
+    ):
+        cfg = create_dict(
+            dataset="ml2hp",
+            datasets_path=datasets_path,
+            normalize_landmarks=True,
+            image_backbone_name=image_backbone_name,
+            landmarks_backbone_name=landmarks_backbone_name,
+            checkpoints_path="./checkpoints/ablation",
+            use_horizontal_image=True if image_backbone_name is not None else False,
+            use_vertical_image=True if image_backbone_name is not None else False,
+            use_horizontal_landmarks=(
+                True if landmarks_backbone_name is not None else False
+            ),
+            use_vertical_landmarks=(
+                True if landmarks_backbone_name is not None else False
+            ),
+            batch_size=batch_size,
+        )
+        filename = f"{cfg['name']}.yaml"
+        with open(join(cfg_path, "ablation", filename), "w") as file:
+            yaml.dump(cfg, file)
+
 
 # exit()
 # # loops over each configuration
@@ -130,3 +124,24 @@ for image_backbone_name, landmarks_backbone_name in itertools.product(BWHandGest
 #     filename = f"{dataset}_{validation}_images={'h' if use_horizontal_image else ''}{'v' if use_vertical_image else ''}_landmarks={'h' if use_horizontal_landmarks else ''}{'v' if use_vertical_landmarks else ''}.yaml"
 #     with open(join(line_args["path"], filename), "w") as file:
 #         yaml.dump(content, file)
+
+if __name__ == "__main__":
+    # parses line args
+    parser = argparse.ArgumentParser(
+        prog="Leap2 Model", description="Generate configs for the pipeline"
+    )
+    parser.add_argument(
+        "--path", default=join(".", "cfgs"), help="Where to save the configs"
+    )
+    parser.add_argument(
+        "--datasets_path",
+        default=join("..", "..", "datasets"),
+        help="Where the datasets are located",
+    )
+    parser.add_argument("--batch_size", default=128)
+    parser.add_argument("--lr", default=1e-5)
+    parser.add_argument("--max_epochs", default=5)
+    parser.add_argument("--seed", default=42)
+    line_args = vars(parser.parse_args())
+
+    main(dataset="ml2hp", **line_args)

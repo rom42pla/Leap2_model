@@ -1,12 +1,12 @@
-batch_size: 256
+batch_size: 128
 checkpoints_path: ./checkpoints/ablation
 dataset: ml2hp
 dataset_path: ../../datasets/ml2hp
 device: auto
 image_backbone_name: convnextv2-t
 landmarks_backbone_name: mlp
-lr: 0.0001
-max_epochs: 1
+lr: 1.0e-05
+max_epochs: 3
 name: ml2hp_loso_convnextv2-t_mlp
 normalize_landmarks: true
 seed: 42

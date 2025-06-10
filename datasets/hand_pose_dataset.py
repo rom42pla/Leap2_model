@@ -5,6 +5,7 @@ import os
 from os import makedirs, listdir
 from os.path import join, isdir, exists
 import shutil
+from typing import Dict, List
 import pandas as pd
 import polars as pl
 from PIL import Image
@@ -398,7 +399,7 @@ class HandPoseDataset(Dataset):
             samples.append(sample)
         return samples
 
-    def get_indices_per_subject(self):
+    def get_indices_per_subject(self) -> Dict[str, List[int]]:
         indices_per_subject = {}
         for i_sample, sample in enumerate(self.samples):
             subject_id = sample["subject_id"]
@@ -447,6 +448,10 @@ class HandPoseDataset(Dataset):
                 ),
             ]
         )
+
+    @staticmethod
+    def _get_subject_ids() -> List[str]:
+        return sorted([str(i).zfill(3) for i in range(1, 21+1)])
 
     def __getitem__(self, idx):
         sample = self.samples[idx]

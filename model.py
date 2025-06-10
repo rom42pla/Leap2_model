@@ -18,6 +18,7 @@ import gc
 import torchvision.transforms as T
 
 from datasets.hand_pose_dataset import HandPoseDataset
+from utils import set_global_seed
 
 
 class BWHandGestureRecognitionModel(pl.LightningModule):
@@ -42,9 +43,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         use_horizontal_landmarks: bool,
         use_vertical_landmarks: bool,
         image_backbone_name: str | None = "resnet18",
-        landmarks_backbone_name: str | None = "linear",
-        lr: float = 1e-4,
-        dropout_p: float = 0.2,
+        landmarks_backbone_name: str | None = "mlp",
+        lr: float = 5e-5,
+        dropout_p: float = 0.5,
         **kwargs,
     ):
         super(BWHandGestureRecognitionModel, self).__init__()
@@ -93,14 +94,14 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.num_classes = num_labels
 
         # image backbone
+        self.adapter = self._parse_image_adapter(name=self.image_backbone_name)
         (
             self.image_features_size,
             self.img_size,
-            self.image_backbone,
+            self._image_backbone,
             self.image_embedder,
         ) = self._parse_image_backbone(name=self.image_backbone_name)
-        self.adapter = self._parse_image_adapter(name=self.image_backbone_name)
-        self._plug_adapter(name=self.image_backbone_name)
+        # self._plug_adapter(name=self.image_backbone_name)
 
         # landmarks backbone
         assert (
@@ -124,13 +125,14 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         # image transforms
         self.image_transforms_train = T.Compose(
             [
-                T.Resize(int(self.img_size * 1.5)),
-                T.RandomCrop(self.img_size),
-                T.RandomHorizontalFlip(p=0.5),
-                T.RandomRotation(10),
+                T.Resize(self.img_size),
+                # T.RandomHorizontalFlip(p=0.5),
+                # T.RandomAffine(degrees=15, translate=(0.02, 0.02), scale=(0.8, 1.2)),
+                # T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
+                # T.RandomErasing(p=0.5, scale=(0.02, 0.1), ratio=(0.3, 3.3)),
             ]
         )
-        self.image_transforms_val = T.Compose(
+        self.image_transforms_val_test = T.Compose(
             [
                 T.Resize(self.img_size),
             ]
@@ -152,52 +154,59 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         elif name == "resnet18":
             out_channels, kernel_size, stride, padding, bias = 64, 7, 2, 3, False
         elif name == "convnextv2-t":
-            out_channels, kernel_size, stride, padding, bias = 96, 4, 4, 0, False
+            out_channels, kernel_size, stride, padding, bias = 96, 4, 4, 0, True
         elif name == "convnextv2-b":
-            out_channels, kernel_size, stride, padding, bias = 128, 4, 4, 0, False
+            out_channels, kernel_size, stride, padding, bias = 128, 4, 4, 0, True
         elif name == "clip-b":
             out_channels, kernel_size, stride, padding, bias = 768, 32, 32, 0, False
         elif name == "dinov2-s":
-            out_channels, kernel_size, stride, padding, bias = 384, 14, 14, 0, False
+            out_channels, kernel_size, stride, padding, bias = 384, 14, 14, 0, True
         elif name == "dinov2-b":
-            out_channels, kernel_size, stride, padding, bias = 768, 14, 14, 0, False
+            out_channels, kernel_size, stride, padding, bias = 768, 14, 14, 0, True
         else:
             raise NotImplementedError(
                 f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
             )
-        return nn.Conv2d(
-            in_channels=self.img_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
-            bias=bias,
+        # if "dinov2" not in name:
+        adapter = nn.Sequential(
+            nn.Conv2d(self.img_channels, 32, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1, bias=True),
         )
 
-    def _plug_adapter(self, name):
-        for param in self.adapter.parameters():
-            param.requires_grad = True
-        if name is None:
-            return nn.Identity()
-        elif name == "resnet18":
-            self.image_backbone.conv1 = self.adapter
-        elif name in {"convnextv2-t", "convnextv2-b"}:
-            self.image_backbone.config.num_channels = self.img_channels
-            self.image_backbone.convnextv2.embeddings.num_channels = self.img_channels
-            self.image_backbone.convnextv2.embeddings.patch_embeddings = self.adapter
-        elif name == "clip-b":
-            self.image_backbone.vision_model.embeddings.patch_embedding = self.adapter
-            self.image_backbone.config.num_channels = self.img_channels
-        elif name in {"dinov2-s", "dinov2-b"}:
-            self.image_backbone.config.num_channels = self.img_channels
-            self.image_backbone.embeddings.patch_embeddings.num_channels = (
-                self.img_channels
-            )
-            self.image_backbone.embeddings.patch_embeddings.projection = self.adapter
-        else:
-            raise NotImplementedError(
-                f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
-            )
+        # else:
+        # adapter = nn.Conv2d(
+        #     in_channels=self.img_channels,
+        #     out_channels=out_channels,
+        #     kernel_size=kernel_size,
+        #     stride=stride,
+        #     padding=padding,
+        #     bias=bias,
+        # )
+        return adapter
+
+    # def _plug_adapter(self, name):
+    #     if name is None:
+    #         return nn.Identity()
+    #     elif name == "resnet18":
+    #         self.image_backbone.conv1 = nn.Identity()
+    #     elif name in {"convnextv2-t", "convnextv2-b"}:
+    #         # self.image_backbone.config.num_channels = self.img_channels
+    #         # self.image_backbone.convnextv2.embeddings.num_channels = self.img_channels
+    #         self.image_backbone.convnextv2.embeddings.patch_embeddings = nn.Identity()
+    #     elif name == "clip-b":
+    #         self.image_backbone.vision_model.embeddings.patch_embedding = nn.Identity()
+    #         # self.image_backbone.config.num_channels = self.img_channels
+    #     elif name in {"dinov2-s", "dinov2-b"}:
+    #         # self.image_backbone.config.num_channels = self.img_channels
+    #         # self.image_backbone.embeddings.patch_embeddings.num_channels = (
+    #         #     self.img_channels
+    #         # )
+    #         self.image_backbone.embeddings.patch_embeddings.projection = nn.Identity()
+    #     else:
+    #         raise NotImplementedError(
+    #             f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
+    #         )
 
     # returns image features size, the image backbone and the function to call the backbone
     def _parse_image_backbone(self, name) -> Tuple[int, int, nn.Module, Callable]:
@@ -209,6 +218,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         elif name == "resnet18":
             image_features_size = 512
             image_backbone = timm.create_model("resnet18.a1_in1k", pretrained=True)
+            # image_backbone.conv1 = self.adapter
             image_backbone.fc = nn.Identity()
             image_size = 288
             image_embedder = lambda imgs: image_backbone(imgs)
@@ -217,6 +227,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             image_backbone = ConvNextV2ForImageClassification.from_pretrained(
                 "facebook/convnextv2-tiny-22k-224"
             )
+            # image_backbone.convnextv2.embeddings.patch_embeddings = self.adapter
+            # image_backbone.config.num_channels = self.img_channels
+            # image_backbone.convnextv2.embeddings.num_channels = self.img_channels
             image_backbone.classifier = nn.Identity()
             image_size = 224
             image_embedder = lambda imgs: image_backbone(imgs).logits
@@ -225,6 +238,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             image_backbone = ConvNextV2ForImageClassification.from_pretrained(
                 "facebook/convnextv2-base-22k-224"
             )
+            # image_backbone.convnextv2.embeddings.patch_embeddings = self.adapter
+            # image_backbone.config.num_channels = self.img_channels
+            # image_backbone.convnextv2.embeddings.num_channels = self.img_channels
             image_backbone.classifier = nn.Identity()
             image_size = 224
             image_embedder = lambda imgs: image_backbone(imgs).logits
@@ -233,6 +249,8 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             image_backbone = CLIPVisionModel.from_pretrained(
                 "openai/clip-vit-base-patch32"
             )
+            # image_backbone.config.num_channels = self.img_channels
+            # image_backbone.vision_model.embeddings.patch_embedding = self.adapter
             image_size = 224
             image_embedder = lambda imgs: image_backbone(
                 pixel_values=imgs
@@ -240,6 +258,10 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         elif name == "dinov2-s":
             image_features_size = 384
             image_backbone = AutoModel.from_pretrained("facebook/dinov2-small")
+            # image_backbone.config.num_channels = self.img_channels
+            # image_backbone.embeddings.patch_embeddings.num_channels = self.img_channels
+            # image_backbone.embeddings.patch_embeddings.projection = self.adapter
+            # image_size = 518
             image_size = 224
             image_embedder = lambda imgs: image_backbone(
                 pixel_values=imgs
@@ -247,6 +269,10 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         elif name == "dinov2-b":
             image_features_size = 768
             image_backbone = AutoModel.from_pretrained("facebook/dinov2-base")
+            # image_backbone.config.num_channels = self.img_channels
+            # image_backbone.embeddings.patch_embeddings.num_channels = self.img_channels
+            # image_backbone.embeddings.patch_embeddings.projection = self.adapter
+            # image_size = 518
             image_size = 224
             image_embedder = lambda imgs: image_backbone(
                 pixel_values=imgs
@@ -255,10 +281,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             raise NotImplementedError(
                 f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
             )
-        # freezes the backbone
         for param in image_backbone.parameters():
-            param.requires_grad = True
-        image_backbone.train()
+            param.requires_grad = False
+        # image_backbone.train()
         # print(f"{name=} has {sum([p.numel() for p in image_backbone.parameters()])/1e6} parameters")
         return image_features_size, image_size, image_backbone, image_embedder
 
@@ -274,7 +299,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         elif name == "mlp":
             landmarks_backbone = nn.Sequential(
                 nn.Linear(self.num_landmarks, 512 * 4),
-                nn.LeakyReLU(),
+                nn.ReLU(inplace=True),
                 nn.Dropout(self.dropout_p),
                 nn.Linear(512 * 4, landmarks_features_size),
             )
@@ -294,9 +319,14 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         )
         if name == "concatenate":
             cls_head = nn.Sequential(
-                nn.Dropout(self.dropout_p),
                 nn.Linear(
                     self.image_features_size + self.landmarks_features_size,
+                    512 * 4,
+                ),
+                nn.LeakyReLU(inplace=True),
+                nn.Dropout(self.dropout_p),
+                nn.Linear(
+                    512 * 4,
                     self.num_classes,
                 ),
             )
@@ -331,28 +361,80 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             )
         return image_features_embedder, landmarks_features_embedder, cls_head, classify
 
+    
+    @staticmethod
+    def _plot_bw_image(img):
+        import matplotlib.pyplot as plt
+        plt.imshow(img, cmap='gray')
+        plt.axis('off')
+        plt.show()
     # def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
-    #     keys_to_pop = []
-    #     for module_name in checkpoint["state_dict"].keys():
-    #         if (
-    #             module_name.startswith("image_backbone")
-    #             and not "adapter" in module_name
-    #         ):
-    #             keys_to_pop.append(module_name)
-    #     for module_name in keys_to_pop:
-    #         del checkpoint["state_dict"][module_name]
+    #     keys_to_remove = [
+    #         k
+    #         for k in checkpoint["state_dict"]
+    #         if k.startswith("_image_backbone.")  # only this module
+    #     ]
+    #     for k in keys_to_remove:
+    #         del checkpoint["state_dict"][k]
 
     # def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
     #     (
     #         self.image_features_size,
-    #         self.image_size,
-    #         self.image_backbone,
+    #         self.img_size,
+    #         self._image_backbone,
     #         self.image_embedder,
     #     ) = self._parse_image_backbone(name=self.image_backbone_name)
-    #     self._plug_adapter(name=self.image_backbone_name)
+
+    #     state_dict = checkpoint.get("state_dict", checkpoint)
+
+    #     # Filter out image_backbone keys — those are frozen anyway
+    #     filtered_state_dict = {
+    #         k: v for k, v in state_dict.items()
+    #         if not k.startswith("image_backbone.")
+    #     }
+
+    #     missing, unexpected = self.load_state_dict(filtered_state_dict, strict=False)
+
+    #     if missing:
+    #         print("⚠️ Missing keys:", missing)
+    #     if unexpected:
+    #         print("⚠️ Unexpected keys:", unexpected)
+
+    # self._plug_adapter(name=self.image_backbone_name)
+    #     state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+    #     # Filter out keys starting with "image_backbone"
+    #     filtered_state_dict = {
+    #         k: v for k, v in state_dict.items() if not k.startswith("image_backbone")
+    #     }
+
+    # Load the filtered state dict
+    # missing, unexpected = self.load_state_dict(filtered_state_dict, strict=False)
+    # print("Missing keys:", missing)
+    # print("Unexpected keys:", unexpected)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=5e-4)
+        optimizer = torch.optim.AdamW(
+            # [
+            #     {"params": self._image_backbone.parameters(), "lr": 5e-5}, # self.adapter is included here
+            #     {
+            #         "params": [
+            #             p
+            #             for module in [
+            #                 self.landmarks_backbone,
+            #                 # self.landmarks_embedder,
+            #                 self.image_features_embedder,
+            #                 self.landmarks_features_embedder,
+            #                 self.cls_head,
+            #             ]
+            #             for p in module.parameters()
+            #         ],
+            #         "lr": 5e-4,
+            #     },
+            # ],
+            self.parameters(),
+            lr=self.lr,
+            # weight_decay=5e-3,
+        )
         return optimizer
 
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
@@ -377,17 +459,17 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         if self.use_vertical_images:
             assert image_vertical is not None, "there are no vertical images"
         if self.use_horizontal_images or self.use_vertical_images:
-            imgs = []
-            if self.use_horizontal_images is not None:
-                imgs.append(image_horizontal.to(self.device))
-            if self.use_vertical_images is not None:
-                imgs.append(image_vertical.to(self.device))
-            imgs = torch.cat(imgs, dim=1).float()
             if self.training:
                 image_transforms = self.image_transforms_train
             else:
-                image_transforms = self.image_transforms_val
-            outs["imgs_embs"] = self.image_embedder(image_transforms(imgs))
+                image_transforms = self.image_transforms_val_test
+            imgs = []
+            if self.use_horizontal_images:
+                imgs.append(image_horizontal.to(self.device))
+            if self.use_vertical_images:
+                imgs.append(image_vertical.to(self.device))
+            imgs = torch.cat(imgs, dim=1).float()
+            outs["imgs_embs"] = self.image_embedder(self.adapter(image_transforms(imgs)))
 
         # landmarks branch
         if self.use_horizontal_landmarks:
@@ -396,9 +478,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             assert landmarks_vertical is not None, "there are no vertical landmarks"
         if self.use_horizontal_landmarks or self.use_vertical_landmarks:
             landmarks = []
-            if self.use_horizontal_landmarks is not None:
+            if self.use_horizontal_landmarks:
                 landmarks.append(landmarks_horizontal.to(self.device))
-            if self.use_vertical_landmarks is not None:
+            if self.use_vertical_landmarks:
                 landmarks.append(landmarks_vertical.to(self.device))
             landmarks = torch.cat(landmarks, dim=1).float()
             outs["landmarks_embs"] = self.landmarks_embedder(landmarks)
@@ -422,11 +504,15 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         start_time = time.time()
         outs = self(**batch)
         elapsed = time.time() - start_time
-        self.epoch_metrics[phase]["time"].append(torch.as_tensor([elapsed], dtype=torch.float32, device=self.device))
+        self.epoch_metrics[phase]["time"].append(
+            torch.as_tensor([elapsed], dtype=torch.float32, device=self.device)
+        )
 
         # number of parameters
         num_params = sum(p.numel() for p in self.parameters())
-        self.epoch_metrics[phase]["num_params"] = torch.as_tensor([num_params], dtype=torch.float32, device=self.device)
+        self.epoch_metrics[phase]["num_params"] = torch.as_tensor(
+            [num_params], dtype=torch.float32, device=self.device
+        )
 
         # MACs and FLOPs
         # TODO
@@ -476,30 +562,31 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
                 target=labels_stacked,
                 task="multiclass",
                 num_classes=self.num_classes,
-                average="micro",
+                average="macro",
             ),
             "cls_rec": torchmetrics.functional.recall(
                 preds=logits_stacked,
                 target=labels_stacked,
                 task="multiclass",
                 num_classes=self.num_classes,
-                average="micro",
+                average="macro",
             ),
             "cls_acc": torchmetrics.functional.accuracy(
                 preds=logits_stacked,
                 target=labels_stacked,
                 task="multiclass",
                 num_classes=self.num_classes,
-                average="micro",
+                average="macro",
             ),
             "cls_f1": torchmetrics.functional.f1_score(
                 preds=logits_stacked,
                 target=labels_stacked,
                 task="multiclass",
                 num_classes=self.num_classes,
-                average="micro",
+                average="macro",
             ),
-            "time": sum(self.epoch_metrics[phase]["time"]) / len(self.epoch_metrics[phase]["time"]),
+            "time": sum(self.epoch_metrics[phase]["time"])
+            / len(self.epoch_metrics[phase]["time"]),
             "num_params": self.epoch_metrics[phase]["num_params"],
         }
         for metric_name, metric_value in metrics.items():
@@ -535,13 +622,16 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
 
 
 if __name__ == "__main__":
+    # sets the seed
+    set_global_seed(42)
     # define the dataset
     dataset = HandPoseDataset(dataset_path="../../datasets/ml2hp")
 
     # define params for the tests
     params = {
         "batch_size": 16,
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        # "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "device": "cpu",
     }
 
     for (

@@ -6,6 +6,7 @@ import gc
 from pprint import pprint
 import argparse
 from datetime import datetime
+from typing import List
 import torch
 from torch.utils.data import Subset, DataLoader
 from lightning.pytorch.loggers import WandbLogger
@@ -26,71 +27,61 @@ from utils import (
     set_global_seed,
 )
 
-if __name__ == "__main__":
+def main(
+        cfg: str,
+        run_name: str | None = None,
+        disable_checkpointing: bool = True,
+        limit_subjects: int | None = None,
+        seed: int = 42,
+):
     # setup
     torch.set_float32_matmul_precision("medium")
 
-    # arguments parsing
-    parser = argparse.ArgumentParser(description="Train a model")
-    parser.add_argument(
-        "--cfg", type=str, help="Path to the configuration", required=True
-    )
-    parser.add_argument(
-        "--disable_checkpointing", default=False, action="store_true", help="Whether not to save model's weights"
-    )
-    parser.add_argument(
-        "--run_name",
-        type=str,
-        help="The name to prepend to the run when logging",
-        required=False,
-    )
-    line_args = vars(parser.parse_args())
-
     # loads the configuration file
     num_workers = os.cpu_count() // 2  # type: ignore
-    with open(line_args["cfg"], "r") as fp:
-        cfg = yaml.safe_load(fp)
-    pprint(cfg)
+    with open(cfg, "r") as fp:
+        cfg_dict = yaml.safe_load(fp)
+    pprint(cfg_dict)
 
     # sets the random seed
-    set_global_seed(seed=cfg["seed"])
+    set_global_seed(seed=seed)
 
     # sets the logging folder
     datetime_str: str = datetime.now().strftime("%Y%m%d-%H%M")
-    experiment_name: str = f"{cfg['name']}-{datetime_str}"
-    experiment_path: str = join(cfg["checkpoints_path"], experiment_name)
+    experiment_name: str = f"{cfg_dict['name']}-{datetime_str}"
+    experiment_path: str = join(cfg_dict["checkpoints_path"], experiment_name)
     makedirs(experiment_path, exist_ok=True)
 
     # sets up the dataset(s)
     dataset = HandPoseDataset(
-        dataset_path=cfg["dataset_path"],
-        normalize_landmarks=cfg["normalize_landmarks"],
+        dataset_path=cfg_dict["dataset_path"],
+        normalize_landmarks=cfg_dict["normalize_landmarks"],
     )
 
     # sets up the validation scheme
-    if cfg["validation"] in ["k_fold", "kfold"]:
+    if cfg_dict["validation"] in ["k_fold", "kfold"]:
         raise NotImplementedError
         runs = get_k_fold_runs(k=args["k"], dataset=dataset)
-    elif cfg["validation"] == "loso":
-        runs = get_loso_runs(dataset=dataset)
-    elif cfg["validation"] == "simple":
-        runs = get_simple_runs(dataset=dataset, train_perc=cfg["train_perc"])
+    elif cfg_dict["validation"] == "loso":
+        runs = get_loso_runs(dataset=dataset, limit_subjects=limit_subjects)
+    elif cfg_dict["validation"] == "simple":
+        runs = get_simple_runs(dataset=dataset, train_perc=cfg_dict["train_perc"])
     else:
         raise NotImplementedError
 
     # setup the model
-    device = get_device_from_string(cfg["device"])  # "cuda" or "cpu"
+    device = get_device_from_string(cfg_dict["device"])  # "cuda" or "cpu"
     model = BWHandGestureRecognitionModel(
         num_labels=dataset.num_labels,
         num_landmarks=dataset.num_landmarks,
         img_channels=dataset.img_channels,
         img_size=dataset.img_size,
-        image_backbone_name=cfg["image_backbone_name"],
-        landmarks_backbone_name=cfg["landmarks_backbone_name"],
-        use_horizontal_images=cfg["use_horizontal_image"],
-        use_vertical_images=cfg["use_vertical_image"],
-        use_horizontal_landmarks=cfg["use_horizontal_landmarks"],
-        use_vertical_landmarks=cfg["use_vertical_landmarks"],
+        image_backbone_name=cfg_dict["image_backbone_name"],
+        landmarks_backbone_name=cfg_dict["landmarks_backbone_name"],
+        use_horizontal_images=cfg_dict["use_horizontal_image"],
+        use_vertical_images=cfg_dict["use_vertical_image"],
+        use_horizontal_landmarks=cfg_dict["use_horizontal_landmarks"],
+        use_vertical_landmarks=cfg_dict["use_vertical_landmarks"],
     )
 
     # saves the initial weights of the model
@@ -99,17 +90,17 @@ if __name__ == "__main__":
 
     # metas
     date = datetime.now().strftime("%Y%m%d_%H%M")
-    cfg_name = splitext(basename(line_args["cfg"]))[0]
+    cfg_name = splitext(basename(cfg))[0]
     experiment_name = f"{date}_{cfg_name}"
-    if line_args["run_name"] is not None:
-        experiment_name += f"_{line_args['run_name']}"
+    if run_name is not None:
+        experiment_name += f"_{run_name}"
     # saves the parameters used in the config
     with open(join(experiment_path, "cfg.yaml"), "w") as fp:
-        yaml.dump(cfg, fp, default_flow_style=False)
+        yaml.dump(cfg_dict, fp, default_flow_style=False)
 
     # loops over runs
     for i_run, run in enumerate(runs):
-        if cfg["validation"] == "loso":
+        if cfg_dict["validation"] == "loso":
             print(
                 f"doing run for subject {run['subject_id']} ({((i_run+1)/len(runs)) * 100:.1f}%)"  # type: ignore
             )
@@ -126,7 +117,7 @@ if __name__ == "__main__":
         # splits the dataset
         dataloader_train = DataLoader(
             dataset=Subset(dataset, indices=run["train_idx"]),  # type: ignore
-            batch_size=cfg["batch_size"],
+            batch_size=cfg_dict["batch_size"],
             shuffle=True,
             pin_memory=False,
             num_workers=num_workers // 2,
@@ -134,7 +125,7 @@ if __name__ == "__main__":
         )
         dataloader_val = DataLoader(
             dataset=Subset(dataset, indices=run["val_idx"]),  # type: ignore
-            batch_size=cfg["batch_size"],
+            batch_size=cfg_dict["batch_size"],
             shuffle=False,
             pin_memory=False,
             num_workers=num_workers,
@@ -161,11 +152,10 @@ if __name__ == "__main__":
             logger=wandb_logger,
             accelerator=device,
             precision="16-mixed",
-            max_epochs=cfg["max_epochs"],
+            max_epochs=cfg_dict["max_epochs"],
             enable_model_summary=True,
             enable_checkpointing=True,
             default_root_dir=experiment_run_path,
-            limit_train_batches=0.1,
             callbacks=[checkpoint_callback],
         )
         trainer.fit(model, dataloader_train, dataloader_val)
@@ -180,7 +170,7 @@ if __name__ == "__main__":
         with open(join(experiment_run_path, "metrics.yaml"), "w") as fp:
             yaml.dump(metrics, fp, default_flow_style=False)
         # eventually removes the checkpoint
-        if line_args["disable_checkpointing"]:
+        if disable_checkpointing:
             os.remove(checkpoint_callback.best_model_path)
 
     wandb.finish()
@@ -188,3 +178,29 @@ if __name__ == "__main__":
     # frees some memory
     del dataset
     gc.collect()
+
+if __name__ == "__main__":
+    # arguments parsing
+    parser = argparse.ArgumentParser(description="Train a model")
+    parser.add_argument(
+        "--cfg", type=str, help="Path to the configuration", required=True
+    )
+    parser.add_argument(
+        "--disable_checkpointing", default=False, action="store_true", help="Whether not to save model's weights"
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        help="The name to prepend to the run when logging",
+        required=False,
+    )
+    parser.add_argument(
+        "--limit_subjects",
+        type=int,
+        default=None,
+        help="The number of subjects to consider for training",
+        required=False,
+    )
+    line_args = vars(parser.parse_args())
+
+    main(**line_args)
