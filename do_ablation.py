@@ -45,10 +45,10 @@ def main():
     ), f"got {line_args.landmarks_backbone}, but expected one of {_possible_landmarks_backbones}"
 
     # generate configs with provided arguments
-    batch_size = 128
+    batch_size, accumulate_grad_batches = 128, 1
     if line_args.image_backbone is not None and "dinov2" in line_args.image_backbone:
-        batch_size = 64
-    generate_configs.main(dataset="ml2hp", datasets_path="../../datasets", batch_size=batch_size)  
+        batch_size, accumulate_grad_batches = 64, 1
+    generate_configs.main(dataset="ml2hp", datasets_path="../../datasets", batch_size=batch_size, accumulate_grad_batches=accumulate_grad_batches, max_epochs=3)  
 
     # match the possible config files
     matched_configs = []

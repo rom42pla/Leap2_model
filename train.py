@@ -10,7 +10,7 @@ from typing import List
 import torch
 from torch.utils.data import Subset, DataLoader
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 from lightning.pytorch import Trainer
 import wandb
 import yaml
@@ -152,7 +152,9 @@ def main(
             logger=wandb_logger,
             accelerator=device,
             precision="16-mixed",
+            gradient_clip_val=1.,
             max_epochs=cfg_dict["max_epochs"],
+            accumulate_grad_batches=cfg_dict["accumulate_grad_batches"],
             enable_model_summary=True,
             enable_checkpointing=True,
             default_root_dir=experiment_run_path,

@@ -1,4 +1,5 @@
-batch_size: 128
+accumulate_grad_batches: 1
+batch_size: 64
 checkpoints_path: ./checkpoints/ablation
 dataset: ml2hp
 dataset_path: ../../datasets/ml2hp

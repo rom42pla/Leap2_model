@@ -22,6 +22,7 @@ def create_dict(
     landmarks_backbone_name="mlp",
     checkpoints_path="./checkpoints",
     batch_size=128,
+    accumulate_grad_batches=1,
     max_epochs=3,
     lr=1e-5,
 ):
@@ -41,6 +42,7 @@ def create_dict(
         "landmarks_backbone_name": landmarks_backbone_name,
         "checkpoints_path": checkpoints_path,
         "batch_size": batch_size,
+        "accumulate_grad_batches": accumulate_grad_batches, 
         "max_epochs": max_epochs,
         "lr": lr,
     }
@@ -51,6 +53,8 @@ def main(
     datasets_path=".",
     cfg_path="./cfgs",
     batch_size=128,
+    accumulate_grad_batches=1,
+    max_epochs=3,
 ):
     # defines the parameters
     datasets = ["ml2hp"]
@@ -78,6 +82,8 @@ def main(
                 True if landmarks_backbone_name is not None else False
             ),
             batch_size=batch_size,
+            accumulate_grad_batches=accumulate_grad_batches,
+            max_epochs=max_epochs,
         )
         filename = f"{cfg['name']}.yaml"
         with open(join(cfg_path, "ablation", filename), "w") as file:
