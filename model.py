@@ -46,8 +46,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         landmarks_backbone_name: str | None = "mlp",
         use_data_augmentation: bool = True,
         lr: float = 5e-5,
-        linear_dropout_p: float = 0.5,
-        conv_dropout_p: float = 0.2,
+        linear_dropout_p: float = 0.2,
         **kwargs,
     ):
         super(BWHandGestureRecognitionModel, self).__init__()
@@ -61,7 +60,6 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.use_vertical_landmarks = use_vertical_landmarks
         
         self.linear_dropout_p = linear_dropout_p
-        self.conv_dropout_p = conv_dropout_p
 
         # parses channels
         if (
@@ -102,7 +100,6 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             nn.Conv2d(self.img_channels, 32, kernel_size=1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(inplace=True),
-            nn.Dropout2d(p=self.conv_dropout_p),
             nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1, bias=True),
         )
         (

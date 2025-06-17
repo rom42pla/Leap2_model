@@ -18,16 +18,33 @@ def create_dict(
     use_horizontal_landmarks=True,
     use_vertical_landmarks=True,
     normalize_landmarks=True,
-    image_backbone_name="clip",
-    landmarks_backbone_name="mlp",
+    image_backbone_name: str | None ="convnextv2-b",
+    landmarks_backbone_name: str | None ="mlp",
     checkpoints_path="./checkpoints",
     batch_size=128,
     accumulate_grad_batches=1,
     max_epochs=3,
-    lr=1e-5,
+    lr=5e-5,
 ):
+    name = f"{dataset}_{validation}_{image_backbone_name}_{landmarks_backbone_name}"
+    if use_horizontal_image and not use_vertical_image:
+        name += "_h-images"
+    elif use_vertical_image and not use_horizontal_image:
+        name += "_v-images"
+    elif use_horizontal_image and use_vertical_image:
+        name += "_hv-images"
+    else:
+        name += "_no-images"
+    if use_horizontal_landmarks and not use_vertical_landmarks:
+        name += "_h-landmarks"
+    elif use_vertical_landmarks and not use_horizontal_landmarks:
+        name += "_v-landmarks"
+    elif use_horizontal_landmarks and use_vertical_landmarks:
+        name += "_hv-landmarks"
+    else:
+        name += "_no-landmarks"
     return {
-        "name": f"{dataset}_{validation}_{image_backbone_name}_{landmarks_backbone_name}",
+        "name": name,
         "dataset": dataset,
         "dataset_path": join(datasets_path, dataset),
         "normalize_landmarks": normalize_landmarks,
@@ -48,7 +65,7 @@ def create_dict(
     }
 
 
-def main(
+def main(  
     dataset,
     datasets_path=".",
     cfg_path="./cfgs",
