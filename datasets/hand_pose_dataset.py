@@ -89,11 +89,11 @@ class HandPoseDataset(Dataset):
                 landmarks_columns_indices=self.landmarks_columns_indices,
             )
             # standardize and normalize the landmarks
-            if self.normalize_landmarks:
-                self.df_landmarks_prep = self.preprocess_landmarks(
-                    df=df_landmarks_raw,
-                    landmarks_columns_indices=self.landmarks_columns_indices,
-                )
+            self.df_landmarks_prep = self.preprocess_landmarks(
+                df=df_landmarks_raw,
+                landmarks_columns_indices=self.landmarks_columns_indices,
+                normalize_landmarks=self.normalize_landmarks,
+            )
             # save the preprocessed landmarks on disk
             self.save_landmarks_data_on_disk(
                 self.df_landmarks_prep,
@@ -116,10 +116,9 @@ class HandPoseDataset(Dataset):
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_landmarks = (
-            np.load(self.samples[0]["landmarks_horizontal"]).size
-            + np.load(self.samples[0]["landmarks_vertical"]).size
-        )
+        self.num_horizontal_landmarks = np.load(self.samples[0]["landmarks_horizontal"]).size
+        self.num_vertical_landmarks = np.load(self.samples[0]["landmarks_vertical"]).size
+        self.num_landmarks = self.num_horizontal_landmarks + self.num_vertical_landmarks
 
         # preprocessing for the images
         assert isinstance(
@@ -206,7 +205,7 @@ class HandPoseDataset(Dataset):
         return df
 
     @staticmethod
-    def preprocess_landmarks(df, landmarks_columns_indices):
+    def preprocess_landmarks(df, landmarks_columns_indices, normalize_landmarks: bool =True):
         subject_ids, hands, poses, devices = [
             df[col].unique().tolist()
             for col in ["subject_id", "which_hand", "pose", "device"]
@@ -230,24 +229,24 @@ class HandPoseDataset(Dataset):
             data = df_values[np.ix_(mask_indices, landmarks_columns_indices)].astype(
                 np.float32
             )
-            # data = df.iloc[mask_indices, landmarks_columns_indices]
 
-            # standardize to zero mean and unit variance
-            means, stds = data.mean(axis=0), data.std(axis=0)
-            standardized_data = (data - means) / (stds + 1e-7)
+            if normalize_landmarks:
+                # standardize to zero mean and unit variance
+                means, stds = data.mean(axis=0), data.std(axis=0)
+                standardized_data = (data - means) / (stds + 1e-7)
 
-            # normalize values between -1 and 1
-            mins, maxs = standardized_data.min(axis=0), standardized_data.max(axis=0)
-            normalized_data = (
-                2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
-            )
-            assert not np.isnan(
-                normalized_data
-            ).any(), f"there are nans in {subject_id}, {hand}, {pose}, {device}"
+                # normalize values between -1 and 1
+                mins, maxs = standardized_data.min(axis=0), standardized_data.max(axis=0)
+                normalized_data = (
+                    2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
+                )
+                assert not np.isnan(
+                    normalized_data
+                ).any(), f"there are nans in {subject_id}, {hand}, {pose}, {device}"
 
-            # assign the new data
-            # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
-            df_values[np.ix_(mask_indices, landmarks_columns_indices)] = normalized_data
+                # assign the new data
+                # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
+                df_values[np.ix_(mask_indices, landmarks_columns_indices)] = normalized_data
 
         df_prep = pd.DataFrame(df_values, columns=df.columns)
 

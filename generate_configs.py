@@ -43,6 +43,8 @@ def create_dict(
         name += "_hv-landmarks"
     else:
         name += "_no-landmarks"
+    if not normalize_landmarks:
+        name += "_no-norm"
     return {
         "name": name,
         "dataset": dataset,

@@ -18,7 +18,7 @@ def main():
     parser.add_argument(
         "--image_backbone",
         required=False,
-        default="convnextv2-b",
+        default="convnextv2-t",
         help="Image backbone to use.",
     )
     parser.add_argument(
@@ -26,6 +26,41 @@ def main():
         required=False,
         default="mlp",
         help="Landmarks backbone to use.",
+    )
+    parser.add_argument(
+        "--use_horizontal_image",
+        action="store_true",
+        help="Whether to use horizontal images.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "--use_vertical_image",
+        action="store_true",
+        help="Whether to use vertical images.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "--use_horizontal_landmarks",
+        action="store_true",
+        help="Whether to use horizontal landmarks.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "--use_vertical_landmarks",
+        action="store_true",
+        help="Whether to use vertical landmarks.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "--normalize_landmarks",
+        action="store_true",
+        help="Whether to use normalize landmarks.",
+        required=False,
+        default=False,
     )
     line_args = parser.parse_args()
 
@@ -57,64 +92,95 @@ def main():
     batch_size, accumulate_grad_batches = 128, 1
     if line_args.image_backbone is not None and "dinov2" in line_args.image_backbone:
         batch_size, accumulate_grad_batches = 64, 1
-    for (
-        use_horizontal_image,
-        use_vertical_image,
-        use_horizontal_landmarks,
-        use_vertical_landmarks,
-    ) in itertools.product([True, False], [True, False], [True, False], [True, False]):
-        num_images = sum(
-            [1 if use_horizontal_image else 0, 1 if use_vertical_image else 0]
-        )
-        num_landmarks = sum(
-            [1 if use_horizontal_landmarks else 0, 1 if use_vertical_landmarks else 0]
-        )
-        if (
-            (num_images == 0 and num_landmarks == 0)
-            or (num_images == 2 and num_landmarks == 1)
-            or (num_images == 1 and num_landmarks == 2)
-        ):
-            # skip the case where no
-            continue
-        if (
-            use_horizontal_image
-            and not use_vertical_image
-            and not use_horizontal_landmarks
-            and use_vertical_landmarks
-        ) or (
-            not use_horizontal_image
-            and use_vertical_image
-            and use_horizontal_landmarks
-            and not use_vertical_landmarks
-        ):
-            continue
-        cfg = generate_configs.create_dict(
-            dataset="ml2hp",
-            datasets_path="../../datasets",
-            checkpoints_path="./checkpoints/results",
-            image_backbone_name=(
-                line_args.image_backbone
-                if any([use_horizontal_image, use_vertical_image])
-                else None
-            ),
-            landmarks_backbone_name=(
-                line_args.landmarks_backbone
-                if any([use_horizontal_landmarks, use_vertical_landmarks])
-                else None
-            ),
-            use_horizontal_image=use_horizontal_image,
-            use_vertical_image=use_vertical_image,
-            use_horizontal_landmarks=use_horizontal_landmarks,
-            use_vertical_landmarks=use_vertical_landmarks,
-            batch_size=batch_size,
-            accumulate_grad_batches=accumulate_grad_batches,
-            max_epochs=10,
-        )
-        filename = f"{cfg['name']}.yaml"
-        with open(join(cfgs_path, filename), "w") as file:
-            yaml.dump(cfg, file)
+    elif not line_args.use_horizontal_image and not line_args.use_vertical_image:
+        batch_size = 512
+    # for (
+    #     use_horizontal_image,
+    #     use_vertical_image,
+    #     use_horizontal_landmarks,
+    #     use_vertical_landmarks,
+    #     normalize_landmarks,
+    # ) in itertools.product([True, False], [True, False], [True, False], [True, False], [True, False]):
+    #     num_images = sum(
+    #         [1 if use_horizontal_image else 0, 1 if use_vertical_image else 0]
+    #     )
+    #     num_landmarks = sum(
+    #         [1 if use_horizontal_landmarks else 0, 1 if use_vertical_landmarks else 0]
+    #     )
+    #     if (
+    #         (num_images == 0 and num_landmarks == 0)
+    #         or (num_images == 2 and num_landmarks == 1)
+    #         or (num_images == 1 and num_landmarks == 2)
+    #     ):
+    #         # skip the case where no
+    #         continue
+    #     if (
+    #         use_horizontal_image
+    #         and not use_vertical_image
+    #         and not use_horizontal_landmarks
+    #         and use_vertical_landmarks
+    #     ) or (
+    #         not use_horizontal_image
+    #         and use_vertical_image
+    #         and use_horizontal_landmarks
+    #         and not use_vertical_landmarks
+    #     ):
+    #         continue
+    #     cfg = generate_configs.create_dict(
+    #         dataset="ml2hp",
+    #         datasets_path="../../datasets",
+    #         checkpoints_path="./checkpoints/results",
+    #         image_backbone_name=(
+    #             line_args.image_backbone
+    #             if any([use_horizontal_image, use_vertical_image])
+    #             else None
+    #         ),
+    #         landmarks_backbone_name=(
+    #             line_args.landmarks_backbone
+    #             if any([use_horizontal_landmarks, use_vertical_landmarks])
+    #             else None
+    #         ),
+    #         use_horizontal_image=use_horizontal_image,
+    #         use_vertical_image=use_vertical_image,
+    #         use_horizontal_landmarks=use_horizontal_landmarks,
+    #         use_vertical_landmarks=use_vertical_landmarks,
+    #         normalize_landmarks=normalize_landmarks,
+    #         batch_size=batch_size,
+    #         accumulate_grad_batches=accumulate_grad_batches,
+    #         max_epochs=3,
+    #     )
+    #     filename = f"{cfg['name']}.yaml"
+    #     with open(join(cfgs_path, filename), "w") as file:
+    #         yaml.dump(cfg, file)
 
-    for cfg_name in listdir(cfgs_path):
+    cfg = generate_configs.create_dict(
+        dataset="ml2hp",
+        datasets_path="../../datasets",
+        checkpoints_path="./checkpoints/results",
+        image_backbone_name=(
+            line_args.image_backbone
+            if any([line_args.use_horizontal_image, line_args.use_vertical_image])
+            else None
+        ),
+        landmarks_backbone_name=(
+            line_args.landmarks_backbone
+            if any([line_args.use_horizontal_landmarks, line_args.use_vertical_landmarks])
+            else None
+        ),
+        use_horizontal_image=line_args.use_horizontal_image,
+        use_vertical_image=line_args.use_vertical_image,
+        use_horizontal_landmarks=line_args.use_horizontal_landmarks,
+        use_vertical_landmarks=line_args.use_vertical_landmarks,
+        normalize_landmarks=line_args.normalize_landmarks,
+        batch_size=batch_size,
+        accumulate_grad_batches=accumulate_grad_batches,
+        max_epochs=3,
+    )
+    filename = f"{cfg['name']}.yaml"
+    with open(join(cfgs_path, filename), "w") as file:
+        yaml.dump(cfg, file)
+
+    for cfg_name in sorted(listdir(cfgs_path)):
         cfg_path = join(cfgs_path, cfg_name)
         # opens the .yaml file
         with open(cfg_path, "r") as file:
@@ -124,10 +190,11 @@ def main():
             train.main(
                 cfg=cfg_path,
                 disable_checkpointing=False,
-                run_name=f"ablation_{cfg['name']}_{line_args.landmarks_backbone}",
+                run_name=f"results_{cfg['name']}",
             )
         except Exception as e:
             print(e)
+
     # for config_path in config_files:
     #     print(f"Running training with config: {config_path}")
     #     subprocess.run([

@@ -57,6 +57,11 @@ def main(
         dataset_path=cfg_dict["dataset_path"],
         normalize_landmarks=cfg_dict["normalize_landmarks"],
     )
+    num_landmarks = 0
+    if cfg_dict["use_horizontal_landmarks"]:
+        num_landmarks += dataset.num_horizontal_landmarks
+    if cfg_dict["use_vertical_landmarks"]:
+        num_landmarks += dataset.num_vertical_landmarks
 
     # sets up the validation scheme
     if cfg_dict["validation"] in ["k_fold", "kfold"]:
@@ -73,7 +78,7 @@ def main(
     device = get_device_from_string(cfg_dict["device"])  # "cuda" or "cpu"
     model = BWHandGestureRecognitionModel(
         num_labels=dataset.num_labels,
-        num_landmarks=dataset.num_landmarks,
+        num_landmarks=num_landmarks,
         img_channels=dataset.img_channels,
         img_size=dataset.img_size,
         image_backbone_name=cfg_dict["image_backbone_name"],
