@@ -93,7 +93,7 @@ def main():
     if line_args.image_backbone is not None and "dinov2" in line_args.image_backbone:
         batch_size, accumulate_grad_batches = 64, 1
     elif not line_args.use_horizontal_image and not line_args.use_vertical_image:
-        batch_size = 512
+        batch_size = 256
     # for (
     #     use_horizontal_image,
     #     use_vertical_image,
