@@ -440,13 +440,13 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         outs = self(**batch)
         elapsed = time.time() - start_time
         self.epoch_metrics[phase]["time"].append(
-            torch.as_tensor([elapsed], dtype=torch.float32, device=self.device)
+            torch.as_tensor([elapsed], dtype=torch.float32)
         )
 
         # number of parameters
         num_params = sum(p.numel() for p in self.parameters())
         self.epoch_metrics[phase]["num_params"] = torch.as_tensor(
-            [num_params], dtype=torch.float32, device=self.device
+            [num_params], dtype=torch.float32
         )
 
         # MACs and FLOPs
@@ -456,9 +456,14 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
 
         batch["label"] = batch["label"].to(self.device)
         outs["loss"] = F.cross_entropy(input=outs["cls_logits"], target=batch["label"], label_smoothing=0.1)
-        self.epoch_metrics[phase]["cls_labels"].append(batch["label"])
-        self.epoch_metrics[phase]["cls_logits"].append(outs["cls_logits"])
-        self.epoch_metrics[phase]["loss"].append(outs["loss"])
+        # for key in outs:
+        #     if key in ["loss"]:
+        #         continue
+        #     if isinstance(outs[key], torch.Tensor) and "cpu" not in str(outs[key].device):
+        #         outs[key] = outs[key].detach().cpu()
+        self.epoch_metrics[phase]["cls_labels"].append(batch["label"].cpu())
+        self.epoch_metrics[phase]["cls_logits"].append(outs["cls_logits"].detach().cpu())
+        self.epoch_metrics[phase]["loss"].append(outs["loss"].detach().cpu())
 
         return outs
 

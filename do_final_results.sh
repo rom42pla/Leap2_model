@@ -10,5 +10,5 @@
 # python do_results.py --use_horizontal_image --normalize_landmarks
 # python do_results.py --use_vertical_image --normalize_landmarks
 
-python do_results.py --use_horizontal_landmarks --normalize_landmarks
+# python do_results.py --use_horizontal_landmarks --normalize_landmarks
 python do_results.py --use_vertical_landmarks --normalize_landmarks

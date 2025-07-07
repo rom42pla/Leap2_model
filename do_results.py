@@ -1,4 +1,5 @@
 import argparse
+import gc
 import itertools
 import subprocess
 import glob
@@ -7,6 +8,7 @@ import shutil
 from os.path import join, isdir
 from os import listdir, makedirs
 
+import torch
 import yaml
 import generate_configs
 import train
@@ -93,7 +95,7 @@ def main():
     if line_args.image_backbone is not None and "dinov2" in line_args.image_backbone:
         batch_size, accumulate_grad_batches = 64, 1
     elif not line_args.use_horizontal_image and not line_args.use_vertical_image:
-        batch_size = 256
+        batch_size = 512
     # for (
     #     use_horizontal_image,
     #     use_vertical_image,
@@ -194,7 +196,10 @@ def main():
             )
         except Exception as e:
             print(e)
-
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+    # config_files = sorted(glob.glob(join(cfgs_path, "*.yaml")))
     # for config_path in config_files:
     #     print(f"Running training with config: {config_path}")
     #     subprocess.run([
