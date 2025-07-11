@@ -77,6 +77,57 @@ def get_k_fold_runs(k: int, dataset) -> List[List[int]]:
     assert len(runs) == k
     return runs
 
+def get_train_test_splits(dataset, limit_subjects: int | None = None) -> List[List[int]]:
+    subject_ids_to_use = dataset._get_subject_ids()
+    indices_per_subject = (
+        dataset.get_indices_per_subject()
+    )  # {1: [1, 2, 3], 2: [4, 5, 6]}
+    if limit_subjects is not None:
+        assert isinstance(
+            limit_subjects, int
+        ), f"got {limit_subjects} ({type(limit_subjects)})"
+        assert 2 <= limit_subjects <= len(subject_ids_to_use), f"got {limit_subjects}"
+        subject_ids_to_use = subject_ids_to_use[:limit_subjects]
+
+    # builds the runs dict
+    run = {
+        "train_idx": [],
+        "val_idx": [],
+    }
+    for i_sample, sample in enumerate(dataset.samples):
+        if sample["subject_id"] not in subject_ids_to_use:
+            continue
+        if sample["split"] == "train":
+            key = "train_idx"
+        elif sample["split"] == "test":
+            key = "val_idx"
+        else:
+            raise ValueError(f"unrecognized split {sample['split']} in sample {sample}")
+        run[key].append(i_sample)
+    runs = [run]
+    return runs
+
+    # for subject in indices_per_subject:
+    #     runs.append(
+    #         {
+    #             "subject_id": str(subject).zfill(3),
+    #             "train_idx": [
+    #                 i
+    #                 for subject_id_inner, indices in indices_per_subject.items()
+    #                 for i in indices
+    #                 if subject_id_inner != subject
+    #             ],
+    #             "val_idx": [
+    #                 i
+    #                 for subject_id_inner, indices in indices_per_subject.items()
+    #                 for i in indices
+    #                 if subject_id_inner == subject
+    #             ],
+    #         }
+    #     )
+    #     assert set(runs[-1]["train_idx"]) & set(runs[-1]["val_idx"]) == set()
+    # assert len(runs) == (limit_subjects if limit_subjects is not None else len(dataset.subject_ids))
+    return runs
 
 def get_loso_runs(dataset, limit_subjects: int | None = None) -> List[List[int]]:
     subject_ids_to_use = dataset._get_subject_ids()

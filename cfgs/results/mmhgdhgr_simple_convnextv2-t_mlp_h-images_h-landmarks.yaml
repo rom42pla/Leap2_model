@@ -8,11 +8,11 @@ image_backbone_name: convnextv2-t
 landmarks_backbone_name: mlp
 lr: 5.0e-05
 max_epochs: 3
-name: mmhgdhgr_loso_convnextv2-t_mlp_h-images_h-landmarks
+name: mmhgdhgr_simple_convnextv2-t_mlp_h-images_h-landmarks
 normalize_landmarks: true
 seed: 42
 use_horizontal_image: true
 use_horizontal_landmarks: true
 use_vertical_image: false
 use_vertical_landmarks: false
-validation: loso
+validation: simple

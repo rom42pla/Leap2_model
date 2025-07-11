@@ -22,18 +22,18 @@ from datasets.ml2hp import MotionLeap2Dataset
 from model import BWHandGestureRecognitionModel
 from utils import (
     get_device_from_string,
-    get_k_fold_runs,
     get_loso_runs,
-    get_simple_runs,
+    get_train_test_splits,
     set_global_seed,
 )
 
+
 def main(
-        cfg: str,
-        run_name: str | None = None,
-        disable_checkpointing: bool = True,
-        limit_subjects: int | None = None,
-        seed: int = 42,
+    cfg: str,
+    run_name: str | None = None,
+    disable_checkpointing: bool = True,
+    limit_subjects: int | None = None,
+    seed: int = 42,
 ):
     # setup
     torch.set_float32_matmul_precision("medium")
@@ -71,22 +71,24 @@ def main(
             normalize_landmarks=cfg_dict["normalize_landmarks"],
         )
         dataset.set_mode(
-            return_images=any([cfg_dict["use_horizontal_image"], cfg_dict["use_vertical_image"]]),
-            return_landmarks=any([cfg_dict["use_horizontal_landmarks"], cfg_dict["use_vertical_landmarks"]]),
+            return_images=any(
+                [cfg_dict["use_horizontal_image"], cfg_dict["use_vertical_image"]]
+            ),
+            return_landmarks=any(
+                [
+                    cfg_dict["use_horizontal_landmarks"],
+                    cfg_dict["use_vertical_landmarks"],
+                ]
+            ),
         )
 
     # sets up the validation scheme
-    if cfg_dict["validation"] in ["k_fold", "kfold"]:
-        raise NotImplementedError
-        runs = get_k_fold_runs(k=args["k"], dataset=dataset)
-    elif cfg_dict["validation"] == "loso":
+    if cfg_dict["dataset"] == "ml2hp" or cfg_dict["validation"] == "loso":
         runs = get_loso_runs(dataset=dataset, limit_subjects=limit_subjects)
-    elif cfg_dict["validation"] == "simple":
-        runs = get_simple_runs(dataset=dataset, train_perc=cfg_dict["train_perc"])
+    elif cfg_dict["dataset"] == "mmhgdhgr":
+        runs = get_train_test_splits(dataset=dataset, limit_subjects=limit_subjects)
     else:
-        raise NotImplementedError
-
-    raise
+        raise NotImplementedError()
 
     # setup the model
     device = get_device_from_string(cfg_dict["device"])  # "cuda" or "cpu"
@@ -152,11 +154,16 @@ def main(
         )
 
         # initialize the model
-        model.load_state_dict(torch.load(initial_state_dict_path, map_location=device), strict=False)
+        model.load_state_dict(
+            torch.load(initial_state_dict_path, map_location=device), strict=False
+        )
         model.to(device)
 
         wandb_logger = WandbLogger(
-            project=cfg_dict["dataset"], name=experiment_name, log_model=False, prefix=run_name
+            project=cfg_dict["dataset"],
+            name=experiment_name,
+            log_model=False,
+            prefix=run_name,
         )
 
         # do the training
@@ -171,7 +178,7 @@ def main(
             logger=wandb_logger,
             accelerator=device,
             precision="16-mixed",
-            gradient_clip_val=1.,
+            gradient_clip_val=1.0,
             max_epochs=cfg_dict["max_epochs"],
             accumulate_grad_batches=cfg_dict["accumulate_grad_batches"],
             enable_model_summary=True,
@@ -200,6 +207,7 @@ def main(
     del dataset
     gc.collect()
 
+
 if __name__ == "__main__":
     # arguments parsing
     parser = argparse.ArgumentParser(description="Train a model")
@@ -207,7 +215,10 @@ if __name__ == "__main__":
         "--cfg", type=str, help="Path to the configuration", required=True
     )
     parser.add_argument(
-        "--disable_checkpointing", default=False, action="store_true", help="Whether not to save model's weights"
+        "--disable_checkpointing",
+        default=False,
+        action="store_true",
+        help="Whether not to save model's weights",
     )
     parser.add_argument(
         "--run_name",

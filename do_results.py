@@ -108,6 +108,7 @@ def main():
         dataset=line_args.dataset,
         datasets_path="../../datasets",
         checkpoints_path=f"./checkpoints/{line_args.dataset}_results",
+        validation="loso" if line_args.dataset == "ml2hp" else "simple",
         image_backbone_name=(
             line_args.image_backbone
             if any([line_args.use_horizontal_image, line_args.use_vertical_image])

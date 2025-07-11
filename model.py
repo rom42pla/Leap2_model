@@ -332,21 +332,6 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             self.image_embedder,
         ) = self._parse_image_backbone(name=self.image_backbone_name)
 
-    #     state_dict = checkpoint.get("state_dict", checkpoint)
-
-    #     # Filter out image_backbone keys — those are frozen anyway
-    #     filtered_state_dict = {
-    #         k: v for k, v in state_dict.items()
-    #         if not k.startswith("image_backbone.")
-    #     }
-
-    #     missing, unexpected = self.load_state_dict(filtered_state_dict, strict=False)
-
-    #     if missing:
-    #         print("⚠️ Missing keys:", missing)
-    #     if unexpected:
-    #         print("⚠️ Unexpected keys:", unexpected)
-
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             # [
@@ -437,6 +422,17 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         # Track time, params, MACs, and FLOPs only for the first batch of the first epoch
         # if batch_idx == 0 and self.current_epoch == 0 and phase in {"val", "test"}:
         start_time = time.time()
+        # adapts to single image and landmarks input
+        if "image" in batch:
+            if self.use_horizontal_images:
+                batch["image_horizontal"] = batch["image"]
+            elif self.use_vertical_images:
+                batch["image_vertical"] = batch["image"]
+        if "landmarks" in batch:
+            if self.use_horizontal_landmarks:
+                batch["landmarks_horizontal"] = batch["landmarks"]
+            elif self.use_vertical_landmarks:
+                batch["landmarks_vertical"] = batch["landmarks"]
         outs = self(**batch)
         elapsed = time.time() - start_time
         self.epoch_metrics[phase]["time"].append(
