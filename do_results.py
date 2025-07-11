@@ -15,6 +15,7 @@ import train
 from model import BWHandGestureRecognitionModel
 
 _possible_datasets = ["ml2hp", "mmhgdhgr"]
+_possible_validations = ["loso", "simple"]
 def main():
     
     parser = argparse.ArgumentParser(description="Run ablation training pipeline.")
@@ -23,6 +24,13 @@ def main():
         required=True,
         choices=_possible_datasets,
         help=f"The dataset to use. Must be one of {_possible_datasets}.",
+    )
+    parser.add_argument(
+        "--validation",
+        required=False,
+        default="loso",
+        choices=_possible_validations,
+        help=f"The validation scheme to use. Must be one of {_possible_validations}.",
     )
     parser.add_argument(
         "--image_backbone",
@@ -73,6 +81,11 @@ def main():
     )
     line_args = parser.parse_args()
 
+    if line_args.dataset not in {"mmhgdhgr"} and line_args.validation == "simple":
+        raise Exception(
+            f"Validation scheme 'simple' is not supported for dataset {line_args.dataset}. "
+            "Please use 'loso' instead."
+        )
     if line_args.image_backbone.lower() == "none":
         line_args.image_backbone = None
     if line_args.landmarks_backbone.lower() == "none":
@@ -108,7 +121,7 @@ def main():
         dataset=line_args.dataset,
         datasets_path="../../datasets",
         checkpoints_path=f"./checkpoints/{line_args.dataset}_results",
-        validation="loso" if line_args.dataset == "ml2hp" else "simple",
+        validation=line_args.validation,
         image_backbone_name=(
             line_args.image_backbone
             if any([line_args.use_horizontal_image, line_args.use_vertical_image])
@@ -126,7 +139,8 @@ def main():
         normalize_landmarks=line_args.normalize_landmarks,
         batch_size=batch_size,
         accumulate_grad_batches=accumulate_grad_batches,
-        max_epochs=3,
+        max_epochs=3 if line_args.dataset == "ml2hp" else 20,
+        lr=5e-5 if line_args.dataset == "ml2hp" else 1e-4,
     )
     filename = f"{cfg['name']}.yaml"
     with open(join(cfgs_path, filename), "w") as file:

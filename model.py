@@ -129,7 +129,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         ) = self._parse_merging_method(name="concatenate")
 
         # image transforms
-        self.image_transforms_train = [T.Resize(self.img_size)]
+        self.image_transforms_train = [T.Resize(self.img_size), T.CenterCrop(self.img_size)]
         assert isinstance(
             use_data_augmentation, bool
         ), f"got {use_data_augmentation}, expected bool"
