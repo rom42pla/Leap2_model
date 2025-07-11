@@ -20,7 +20,7 @@ from tqdm import tqdm
 import yaml
 
 
-class HandPoseDataset(Dataset):
+class MotionLeap2Dataset(Dataset):
     _possible_images_needed = ["left", "right", "both"]
 
     def __init__(
@@ -500,7 +500,7 @@ class HandPoseDataset(Dataset):
 
 
 if __name__ == "__main__":
-    dataset = HandPoseDataset(dataset_path="../../datasets/ml2hp")
+    dataset = MotionLeap2Dataset(dataset_path="../../datasets/ml2hp")
     for k, v in dataset[0].items():
         if isinstance(v, torch.Tensor):
             print(

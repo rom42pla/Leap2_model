@@ -11,7 +11,7 @@ from lightning.pytorch import Trainer
 from tqdm import tqdm
 import yaml
 
-from datasets.hand_pose_dataset import HandPoseDataset
+from datasets.ml2hp import HandPoseDataset
 
 from model import BWHandGestureRecognitionModel
 from utils import (

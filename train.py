@@ -16,7 +16,8 @@ import wandb
 import yaml
 from tqdm import tqdm
 
-from datasets.hand_pose_dataset import HandPoseDataset
+from datasets.mmhgdhgr import MultiModalHandGestureDatasetForHandGestureRecognition
+from datasets.ml2hp import MotionLeap2Dataset
 
 from model import BWHandGestureRecognitionModel
 from utils import (
@@ -53,15 +54,26 @@ def main(
     makedirs(experiment_path, exist_ok=True)
 
     # sets up the dataset(s)
-    dataset = HandPoseDataset(
-        dataset_path=cfg_dict["dataset_path"],
-        normalize_landmarks=cfg_dict["normalize_landmarks"],
-    )
-    num_landmarks = 0
-    if cfg_dict["use_horizontal_landmarks"]:
-        num_landmarks += dataset.num_horizontal_landmarks
-    if cfg_dict["use_vertical_landmarks"]:
-        num_landmarks += dataset.num_vertical_landmarks
+    if cfg_dict["dataset"] == "ml2hp":
+        dataset = MotionLeap2Dataset(
+            dataset_path=cfg_dict["dataset_path"],
+            normalize_landmarks=cfg_dict["normalize_landmarks"],
+        )
+        dataset.set_mode(
+            return_horizontal_images=cfg_dict["use_horizontal_image"],
+            return_vertical_images=cfg_dict["use_vertical_image"],
+            return_horizontal_landmarks=cfg_dict["use_horizontal_landmarks"],
+            return_vertical_landmarks=cfg_dict["use_vertical_landmarks"],
+        )
+    elif cfg_dict["dataset"] == "mmhgdhgr":
+        dataset = MultiModalHandGestureDatasetForHandGestureRecognition(
+            dataset_path=cfg_dict["dataset_path"],
+            normalize_landmarks=cfg_dict["normalize_landmarks"],
+        )
+        dataset.set_mode(
+            return_images=any([cfg_dict["use_horizontal_image"], cfg_dict["use_vertical_image"]]),
+            return_landmarks=any([cfg_dict["use_horizontal_landmarks"], cfg_dict["use_vertical_landmarks"]]),
+        )
 
     # sets up the validation scheme
     if cfg_dict["validation"] in ["k_fold", "kfold"]:
@@ -74,11 +86,13 @@ def main(
     else:
         raise NotImplementedError
 
+    raise
+
     # setup the model
     device = get_device_from_string(cfg_dict["device"])  # "cuda" or "cpu"
     model = BWHandGestureRecognitionModel(
         num_labels=dataset.num_labels,
-        num_landmarks=num_landmarks,
+        num_landmarks=dataset.num_landmarks,
         img_channels=dataset.img_channels,
         img_size=dataset.img_size,
         image_backbone_name=cfg_dict["image_backbone_name"],
@@ -142,7 +156,7 @@ def main(
         model.to(device)
 
         wandb_logger = WandbLogger(
-            project="ml2hp", name=experiment_name, log_model=False, prefix=run_name
+            project=cfg_dict["dataset"], name=experiment_name, log_model=False, prefix=run_name
         )
 
         # do the training

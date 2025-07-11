@@ -467,6 +467,7 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
         self,
         return_images=None,
         return_landmarks=None,
+        **kwargs
     ):
         if return_images is not None:
             assert isinstance(return_images, bool)
@@ -517,7 +518,7 @@ if __name__ == "__main__":
         )
         batch = dataset[
             0
-        ]  # keys are ['label', 'landmarks_horizontal', 'image_horizontal', 'landmarks_vertical', 'image_vertical']
+        ]  # keys are ['label', 'landmarks', 'image']
         if return_images:
             assert "image" in batch, f"keys are {batch.keys()}"
         if return_landmarks:

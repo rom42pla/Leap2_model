@@ -14,9 +14,16 @@ import generate_configs
 import train
 from model import BWHandGestureRecognitionModel
 
-
+_possible_datasets = ["ml2hp", "mmhgdhgr"]
 def main():
+    
     parser = argparse.ArgumentParser(description="Run ablation training pipeline.")
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=_possible_datasets,
+        help=f"The dataset to use. Must be one of {_possible_datasets}.",
+    )
     parser.add_argument(
         "--image_backbone",
         required=False,
@@ -96,69 +103,11 @@ def main():
         batch_size, accumulate_grad_batches = 64, 1
     elif not line_args.use_horizontal_image and not line_args.use_vertical_image:
         batch_size = 512
-    # for (
-    #     use_horizontal_image,
-    #     use_vertical_image,
-    #     use_horizontal_landmarks,
-    #     use_vertical_landmarks,
-    #     normalize_landmarks,
-    # ) in itertools.product([True, False], [True, False], [True, False], [True, False], [True, False]):
-    #     num_images = sum(
-    #         [1 if use_horizontal_image else 0, 1 if use_vertical_image else 0]
-    #     )
-    #     num_landmarks = sum(
-    #         [1 if use_horizontal_landmarks else 0, 1 if use_vertical_landmarks else 0]
-    #     )
-    #     if (
-    #         (num_images == 0 and num_landmarks == 0)
-    #         or (num_images == 2 and num_landmarks == 1)
-    #         or (num_images == 1 and num_landmarks == 2)
-    #     ):
-    #         # skip the case where no
-    #         continue
-    #     if (
-    #         use_horizontal_image
-    #         and not use_vertical_image
-    #         and not use_horizontal_landmarks
-    #         and use_vertical_landmarks
-    #     ) or (
-    #         not use_horizontal_image
-    #         and use_vertical_image
-    #         and use_horizontal_landmarks
-    #         and not use_vertical_landmarks
-    #     ):
-    #         continue
-    #     cfg = generate_configs.create_dict(
-    #         dataset="ml2hp",
-    #         datasets_path="../../datasets",
-    #         checkpoints_path="./checkpoints/results",
-    #         image_backbone_name=(
-    #             line_args.image_backbone
-    #             if any([use_horizontal_image, use_vertical_image])
-    #             else None
-    #         ),
-    #         landmarks_backbone_name=(
-    #             line_args.landmarks_backbone
-    #             if any([use_horizontal_landmarks, use_vertical_landmarks])
-    #             else None
-    #         ),
-    #         use_horizontal_image=use_horizontal_image,
-    #         use_vertical_image=use_vertical_image,
-    #         use_horizontal_landmarks=use_horizontal_landmarks,
-    #         use_vertical_landmarks=use_vertical_landmarks,
-    #         normalize_landmarks=normalize_landmarks,
-    #         batch_size=batch_size,
-    #         accumulate_grad_batches=accumulate_grad_batches,
-    #         max_epochs=3,
-    #     )
-    #     filename = f"{cfg['name']}.yaml"
-    #     with open(join(cfgs_path, filename), "w") as file:
-    #         yaml.dump(cfg, file)
 
     cfg = generate_configs.create_dict(
-        dataset="ml2hp",
+        dataset=line_args.dataset,
         datasets_path="../../datasets",
-        checkpoints_path="./checkpoints/results",
+        checkpoints_path=f"./checkpoints/{line_args.dataset}_results",
         image_backbone_name=(
             line_args.image_backbone
             if any([line_args.use_horizontal_image, line_args.use_vertical_image])

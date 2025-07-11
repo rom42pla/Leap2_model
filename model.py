@@ -17,7 +17,7 @@ from transformers import AutoModel, CLIPVisionModel, ConvNextV2ForImageClassific
 import gc
 import torchvision.transforms as T
 
-from datasets.hand_pose_dataset import HandPoseDataset
+from datasets.ml2hp import MotionLeap2Dataset
 from utils import set_global_seed
 
 

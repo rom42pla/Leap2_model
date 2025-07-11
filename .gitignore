@@ -8,3 +8,4 @@ lightning_logs
 ml2hp
 _*
 *.pth
+*.zip

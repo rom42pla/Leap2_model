@@ -76,8 +76,7 @@ def main(
     max_epochs=3,
 ):
     # defines the parameters
-    datasets = ["ml2hp"]
-    validations = ["loso"]
+    datasets = ["ml2hp", "mmhgdhgr"]
 
     # creates the ablation configurations
     makedirs(join(cfg_path, "ablation"), exist_ok=True)
@@ -92,6 +91,34 @@ def main(
             image_backbone_name=image_backbone_name,
             landmarks_backbone_name=landmarks_backbone_name,
             checkpoints_path="./checkpoints/ablation",
+            use_horizontal_image=True if image_backbone_name is not None else False,
+            use_vertical_image=True if image_backbone_name is not None else False,
+            use_horizontal_landmarks=(
+                True if landmarks_backbone_name is not None else False
+            ),
+            use_vertical_landmarks=(
+                True if landmarks_backbone_name is not None else False
+            ),
+            batch_size=batch_size,
+            accumulate_grad_batches=accumulate_grad_batches,
+            max_epochs=max_epochs,
+        )
+        filename = f"{cfg['name']}.yaml"
+        with open(join(cfg_path, "ablation", filename), "w") as file:
+            yaml.dump(cfg, file)
+    
+
+    # creates the normal configurations
+    for dataset in datasets:
+        makedirs(join(cfg_path, dataset), exist_ok=True)
+        image_backbone_name = "convnextv2-t"
+        cfg = create_dict(
+            dataset=dataset,
+            datasets_path=datasets_path,
+            normalize_landmarks=True,
+            image_backbone_name=image_backbone_name,
+            landmarks_backbone_name="mlp",
+            checkpoints_path=f"./checkpoints/{dataset}",
             use_horizontal_image=True if image_backbone_name is not None else False,
             use_vertical_image=True if image_backbone_name is not None else False,
             use_horizontal_landmarks=(
