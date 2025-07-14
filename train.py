@@ -103,6 +103,7 @@ def main(
         use_vertical_images=cfg_dict["use_vertical_image"],
         use_horizontal_landmarks=cfg_dict["use_horizontal_landmarks"],
         use_vertical_landmarks=cfg_dict["use_vertical_landmarks"],
+        train_image_backbone=cfg_dict["train_image_backbone"],
     )
 
     # saves the initial weights of the model

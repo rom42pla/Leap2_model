@@ -39,6 +39,13 @@ def main():
         help="Image backbone to use.",
     )
     parser.add_argument(
+        "--train_image_backbone",
+        action="store_true",
+        help="Whether to finetune the image backbone.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
         "--landmarks_backbone",
         required=False,
         default="mlp",
@@ -76,6 +83,13 @@ def main():
         "--normalize_landmarks",
         action="store_true",
         help="Whether to use normalize landmarks.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "--disable_checkpointing",
+        action="store_true",
+        help="Whether not to save model checkpoints.",
         required=False,
         default=False,
     )
@@ -139,8 +153,9 @@ def main():
         normalize_landmarks=line_args.normalize_landmarks,
         batch_size=batch_size,
         accumulate_grad_batches=accumulate_grad_batches,
-        max_epochs=3 if line_args.dataset == "ml2hp" else 20,
-        lr=5e-5 if line_args.dataset == "ml2hp" else 1e-4,
+        max_epochs=3 if line_args.dataset == "ml2hp" else 10,
+        lr=5e-5,
+        train_image_backbone=line_args.train_image_backbone,
     )
     filename = f"{cfg['name']}.yaml"
     with open(join(cfgs_path, filename), "w") as file:
@@ -155,7 +170,7 @@ def main():
         try:
             train.main(
                 cfg=cfg_path,
-                disable_checkpointing=False,
+                disable_checkpointing=line_args.disable_checkpointing,
                 run_name=f"results_{cfg['name']}",
             )
         except Exception as e:

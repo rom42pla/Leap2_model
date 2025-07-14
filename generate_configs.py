@@ -25,6 +25,7 @@ def create_dict(
     accumulate_grad_batches=1,
     max_epochs=3,
     lr=5e-5,
+    train_image_backbone=False,
 ):
     name = f"{dataset}_{validation}_{image_backbone_name}_{landmarks_backbone_name}"
     if use_horizontal_image and not use_vertical_image:
@@ -64,6 +65,7 @@ def create_dict(
         "accumulate_grad_batches": accumulate_grad_batches, 
         "max_epochs": max_epochs,
         "lr": lr,
+        "train_image_backbone": train_image_backbone,
     }
 
 

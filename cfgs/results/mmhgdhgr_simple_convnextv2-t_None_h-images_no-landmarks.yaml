@@ -6,11 +6,12 @@ dataset_path: ../../datasets/mmhgdhgr
 device: auto
 image_backbone_name: convnextv2-t
 landmarks_backbone_name: null
-lr: 0.001
-max_epochs: 20
+lr: 5.0e-05
+max_epochs: 10
 name: mmhgdhgr_simple_convnextv2-t_None_h-images_no-landmarks
 normalize_landmarks: true
 seed: 42
+train_image_backbone: true
 use_horizontal_image: true
 use_horizontal_landmarks: false
 use_vertical_image: false

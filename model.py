@@ -47,6 +47,7 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         use_data_augmentation: bool = True,
         lr: float = 5e-5,
         linear_dropout_p: float = 0.2,
+        train_image_backbone: bool = False,
         **kwargs,
     ):
         super(BWHandGestureRecognitionModel, self).__init__()
@@ -96,6 +97,8 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         self.num_classes = num_labels
 
         # image backbone
+        assert isinstance(train_image_backbone, bool), f"got {train_image_backbone} ({type(train_image_backbone)})"
+        self.train_image_backbone = train_image_backbone
         self.adapter = nn.Sequential(
             nn.Conv2d(self.img_channels, 32, kernel_size=1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(32),
@@ -227,9 +230,9 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             raise NotImplementedError(
                 f"got image backbone '{name}', expected one of {self._possible_image_backbones}"
             )
-        # freezes image backbone's parameters
+        # eventually freezes image backbone's parameters
         for param in image_backbone.parameters():
-            param.requires_grad = False
+            param.requires_grad = self.train_image_backbone
         return image_features_size, image_size, image_backbone, image_embedder
 
     def _parse_landmarks_backbone(self, name) -> Tuple[int, nn.Module, Callable]:
@@ -316,6 +319,8 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
         plt.show()
 
     def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        if self.train_image_backbone:
+            return
         keys_to_remove = [
             k
             for k in checkpoint["state_dict"]

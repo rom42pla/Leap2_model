@@ -366,7 +366,7 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
                                 pose,
                             )
                         )
-                        # if s.endswith("_l.npy")
+                        if s.endswith("_l.npy")
                     ]:
                         sample["landmarks"] = join(
                             preprocessed_landmarks_path,
