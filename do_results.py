@@ -153,8 +153,8 @@ def main():
         normalize_landmarks=line_args.normalize_landmarks,
         batch_size=batch_size,
         accumulate_grad_batches=accumulate_grad_batches,
-        max_epochs=3 if line_args.dataset == "ml2hp" else 10,
-        lr=5e-5,
+        max_epochs=3 if line_args.dataset == "ml2hp" else 30,
+        lr=1e-4,
         train_image_backbone=line_args.train_image_backbone,
     )
     filename = f"{cfg['name']}.yaml"

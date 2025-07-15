@@ -246,12 +246,17 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
             landmarks_backbone = nn.Linear(self.num_landmarks, landmarks_features_size)
         elif name == "mlp":
             landmarks_backbone = nn.Sequential(
-                nn.Dropout(self.linear_dropout_p),
+                # nn.Dropout(self.linear_dropout_p),
                 nn.Linear(self.num_landmarks, 512 * 4),
                 nn.LeakyReLU(inplace=True),
                 nn.Dropout(self.linear_dropout_p),
                 nn.Linear(512 * 4, landmarks_features_size),
+                nn.LeakyReLU(inplace=True),
             )
+            # landmarks_backbone = nn.Sequential(
+            #     nn.Linear(self.num_landmarks, landmarks_features_size),
+            #     nn.LeakyReLU(inplace=True),
+            # )
         else:
             raise NotImplementedError(
                 f"got landmarks backbone '{name}', expected one of {self._possible_landmarks_backbones}"
@@ -279,6 +284,12 @@ class BWHandGestureRecognitionModel(pl.LightningModule):
                     self.num_classes,
                 ),
             )
+            # cls_head = nn.Sequential(
+            #     nn.Linear(
+            #         self.image_features_size + self.landmarks_features_size,
+            #         self.num_classes,
+            #     ),
+            # )
 
             def classify(image_features, landmarks_features):
                 assert any([image_features is not None, landmarks_features is not None])

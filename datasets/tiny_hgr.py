@@ -3,7 +3,7 @@ from pprint import pprint
 import itertools
 import os
 from os import makedirs, listdir
-from os.path import join, isdir, exists
+from os.path import join, isdir, exists, basename
 import shutil
 from typing import Dict, List
 import pandas as pd
@@ -20,42 +20,27 @@ from tqdm import tqdm
 import yaml
 
 
-class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
-    _possible_splits = ["train", "test", "all"]
+class TinyHandGestureRecognitionDataset(Dataset):
 
     def __init__(
         self,
         dataset_path,
-        preprocessed_landmarks_path="_mmhgdhgr_preprocessed_landmarks",
+        preprocessed_landmarks_path="_tiny_hgr_preprocessed_landmarks",
         img_size=256,
-        split="train",
         normalize_landmarks=True,
     ):
         assert isdir(dataset_path)
         self.dataset_path = dataset_path
         self.normalize_landmarks = normalize_landmarks
-        assert (
-            split in self._possible_splits
-        ), f"split must be one of {self._possible_splits}, got {split}"
-        self.split = split
 
         self.poses_dict = {
-            "C": 0,
-            "down": 1,
-            "fist_moved": 2,
-            "five": 3,
-            "four": 4,
-            "hang": 5,
-            "heavy": 6,
-            "index": 7,
-            "L": 8,
-            "ok": 9,
-            "palm": 10,
-            "palm_m": 11,
-            "palm_u": 12,
-            "three": 13,
-            "two": 14,
-            "up": 15,
+            "fist": 0,
+            "l": 1,
+            "ok": 2,
+            "palm": 3,
+            "pointer": 4,
+            "thumb down": 5,
+            "thumb up": 6,
         }
 
         self.preprocessed_dataset_path = preprocessed_landmarks_path
@@ -79,21 +64,13 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
             makedirs(self.preprocessed_dataset_path)
             # parses the cleaned landmarks
             df_landmarks_raw = self.load_raw_landmarks(
-                df_landmarks_train_path=join(
+                df_landmarks_path=join(
                     self.dataset_path,
-                    "pose",
-                    "train_pose",
-                    "coordinates_frames_labelled.csv",
-                ),
-                df_landmarks_test_path=join(
-                    self.dataset_path,
-                    "pose",
-                    "test_pose",
                     "coordinates_frames_labelled.csv",
                 ),
             )
             # retrieves the columns indices with actual values from landmarks
-            self.landmarks_columns_indices = list(range(1, 43))
+            self.landmarks_columns_indices = list(range(42))
             # fills the missing values in the landmarks
             # df_landmarks_raw = self.fill_nans(
             #     df=df_landmarks_raw,
@@ -126,9 +103,7 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_landmarks = np.load(
-            self.samples[0]["landmarks"]
-        ).size
+        self.num_landmarks = np.load(self.samples[0]["landmarks"]).size
 
         # preprocessing for the images
         assert isinstance(
@@ -155,38 +130,17 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
         return len(self.samples)
 
     @staticmethod
-    def load_raw_landmarks(df_landmarks_train_path=None, df_landmarks_test_path=None):
-        assert (
-            df_landmarks_train_path is not None or df_landmarks_test_path is not None
-        ), "at least one of df_landmarks_train_path or df_landmarks_test_path must be provided"
-        dfs = []
-        if df_landmarks_train_path is not None:
-            dfs.append(
-                pl.read_csv(df_landmarks_train_path).to_pandas(
-                    use_pyarrow_extension_array=False
-                )
-            )
-            dfs[-1]["split"] = "train"
-        if df_landmarks_test_path is not None:
-            dfs.append(
-                pl.read_csv(df_landmarks_test_path).to_pandas(
-                    use_pyarrow_extension_array=False
-                )
-            )
-            dfs[-1]["split"] = "test"
-        # eventually concatenates the two dataframes
-        if len(dfs) == 1:
-            df_landmarks = dfs[0]
-        if len(dfs) >= 2:
-            # concatenate the two dataframes. the 'device' column keeps track of which landmarks come from which device
-            df_landmarks = pd.concat(dfs)
+    def load_raw_landmarks(df_landmarks_path):
+        assert df_landmarks_path is not None
+        df_landmarks = pd.read_csv(df_landmarks_path)
         df_landmarks = df_landmarks.rename(
             columns={
                 "user": "subject_id",
                 "symbol": "pose",
-                "frame": "frame_id",
+                "path": "frame_id",
             }
         )
+        df_landmarks['frame_id'] = df_landmarks['frame_id'].apply(lambda x: basename(x).split("\\")[-1])
         return df_landmarks
 
     @staticmethod
@@ -240,7 +194,7 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
             list(itertools.product(subject_ids, poses)),
             desc="Preprocessing data",
         ):
-            # builds a mask of the rowss that match the current subject, hand, pose, and device
+            # builds a mask of the rows that match the current subject, hand, pose, and device
             mask = (df["subject_id"].values == subject_id) & (df["pose"].values == pose)
             mask_indices = np.where(mask)[0]
             # mask_indices = mask[mask].index
@@ -271,14 +225,14 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
                 # means, stds = normalized_data.mean(axis=0), normalized_data.std(axis=0)
                 # normalized_data = (normalized_data - means) / (stds + 1e-7)
 
-                # normalize values between -1 and 1
+                # # normalize values between -1 and 1
                 # mins, maxs = normalized_data.min(axis=0), normalized_data.max(
                 #     axis=0
                 # )
                 # normalized_data = (
                 #     2 * (normalized_data - mins) / ((maxs - mins) - 1 + 1e-7)
-                # )                
-                            
+                # )
+
                 assert not np.isnan(
                     normalized_data
                 ).any(), f"there are nans in {subject_id}, {pose}"
@@ -329,21 +283,21 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
             for i_col, col in enumerate(df.columns)
             if i_col in landmarks_columns_indices
         ]
-        for row in tqdm(
-            pl.from_pandas(df).iter_rows(named=True),
+        for _, row in tqdm(
+            df.iterrows(),
             desc=f"Saving preprocessed landmarks to {output_path}",
             total=len(df),
         ):
             # parses all the metas
-            frame_id, subject_id, pose, split = [
-                str(row[col]) for col in ["frame_id", "subject_id", "pose", "split"]
+            frame_id, subject_id, pose = [
+                str(row[col]) for col in ["frame_id", "subject_id", "pose"]
             ]
             # retrieves the landmarks from the big dataframe
             arr_landmarks = np.asarray(
                 [float(row[col]) for col in landmarks_columns]
             ).astype(np.float32)
             # saves the landmarks to disk
-            path = join(output_path, "pose", subject_id, f"{split}_pose", pose)
+            path = join(output_path, subject_id, pose)
             if not isdir(path):
                 os.makedirs(path)
             np.save(
@@ -354,59 +308,47 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
     @staticmethod
     def parse_samples(dataset_path, preprocessed_landmarks_path, poses_dict):
         samples = []
-        subject_ids = [f for f in listdir(join(preprocessed_landmarks_path, "pose"))]
+        subject_ids = [f for f in listdir(join(preprocessed_landmarks_path))]
         for subject_id in subject_ids:
-            for split in [
-                s.split("_")[0]
-                for s in listdir(join(preprocessed_landmarks_path, "pose", subject_id))
-            ]:
-                for pose in listdir(
-                    join(
-                        preprocessed_landmarks_path, "pose", subject_id, f"{split}_pose"
-                    )
-                ):
-                    sample = {
-                        "subject_id": subject_id,
-                        "pose": pose,
-                        "split": split,
-                        "label": poses_dict[pose],
-                    }
-                    for frame_id in [
-                        s.split(".")[0]
-                        for s in listdir(
-                            join(
-                                preprocessed_landmarks_path,
-                                "pose",
-                                subject_id,
-                                f"{split}_pose",
-                                pose,
-                            )
-                        )
-                        if s.endswith("_l.npy")
-                    ]:
-                        sample["landmarks"] = join(
+            for pose in listdir(
+                join(
+                    preprocessed_landmarks_path, subject_id
+                )
+            ):
+                sample = {
+                    "subject_id": subject_id,
+                    "pose": pose,
+                    "label": poses_dict[pose],
+                }
+                for frame_id in [
+                    s.split(".")[0]
+                    for s in listdir(
+                        join(
                             preprocessed_landmarks_path,
-                            "pose",
                             subject_id,
-                            f"{split}_pose",
                             pose,
-                            f"{frame_id}.npy",
                         )
-                        assert exists(
-                            sample["landmarks"]
-                        ), f"{sample['landmarks']} does not exist"
-                        sample["image"] = join(
-                            dataset_path,
-                            "near-infrared",
-                            subject_id,
-                            f"{split}_pose",
-                            pose,
-                            f"{frame_id}.png",
-                        )
-                        assert exists(
-                            sample["image"]
-                        ), f"{sample['image']} does not exist"
-                        samples.append(deepcopy(sample))
+                    )
+                ]:
+                    sample["landmarks"] = join(
+                        preprocessed_landmarks_path,
+                        subject_id,
+                        pose,
+                        f"{frame_id}.npy",
+                    )
+                    assert exists(
+                        sample["landmarks"]
+                    ), f"{sample['landmarks']} does not exist"
+                    sample["image"] = join(
+                        dataset_path,
+                        subject_id,
+                        pose,
+                        f"{frame_id}.jpg",
+                    )
+                    assert exists(
+                        sample["image"]
+                    ), f"{sample['image']} does not exist"
+                    samples.append(deepcopy(sample))
         # splits = [s.split("_")[0] for s in listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0]))]
         # poses = listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0], f"{splits[0]}_pose"))
         # frame_ids = [
@@ -480,12 +422,7 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
             indices_per_subject[subject_id].append(i_sample)
         return indices_per_subject
 
-    def set_mode(
-        self,
-        return_images=None,
-        return_landmarks=None,
-        **kwargs
-    ):
+    def set_mode(self, return_images=None, return_landmarks=None, **kwargs):
         if return_images is not None:
             assert isinstance(return_images, bool)
             self.return_images = return_images
@@ -513,8 +450,8 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
 
 
 if __name__ == "__main__":
-    dataset = MultiModalHandGestureDatasetForHandGestureRecognition(
-        dataset_path="../../datasets/mmhgdhgr",
+    dataset = TinyHandGestureRecognitionDataset(
+        dataset_path="../../datasets/tiny_hgr",
         normalize_landmarks=True,
     )
 
@@ -525,7 +462,8 @@ if __name__ == "__main__":
     ) in tqdm(
         list(
             itertools.product(
-                [True, False], [True, False],
+                [True, False],
+                [True, False],
             )
         ),
         desc="trying all modes combinations",
@@ -534,9 +472,7 @@ if __name__ == "__main__":
             return_images=return_images,
             return_landmarks=return_landmarks,
         )
-        batch = dataset[
-            0
-        ]  # keys are ['label', 'landmarks', 'image']
+        batch = dataset[0]  # keys are ['label', 'landmarks', 'image']
         if return_images:
             assert "image" in batch, f"keys are {batch.keys()}"
         if return_landmarks:
