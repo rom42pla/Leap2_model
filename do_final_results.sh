@@ -22,12 +22,12 @@
 ##################
 
 python do_results.py --validation simple --train_image_backbone --dataset=mmhgdhgr --use_horizontal_landmarks --landmarks_backbone none --normalize_landmarks
-# python do_results.py --validation simple --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --normalize_landmarks
-# python do_results.py --validation simple --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks
+python do_results.py --validation simple --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --normalize_landmarks
+python do_results.py --validation simple --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks
 
-# python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_landmarks --normalize_landmarks
-# python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --normalize_landmarks
-# python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks
+python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_landmarks --normalize_landmarks
+python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --normalize_landmarks
+python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks
 
 
 # python do_results.py --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks
