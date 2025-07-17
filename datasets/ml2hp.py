@@ -83,9 +83,11 @@ class MotionLeap2Dataset(Dataset):
                 )
             with open(join(self.preprocessed_dataset_path, "info.yaml"), "r") as fp:
                 info = yaml.safe_load(fp)
-            if info['normalized_landmarks'] != self.normalize_landmarks:
+            if info["normalized_landmarks"] != self.normalize_landmarks:
                 shutil.rmtree(self.preprocessed_dataset_path)
-                print("rebuilding the preprocessed dataset because of different normalization")
+                print(
+                    "rebuilding the preprocessed dataset because of different normalization"
+                )
         if not exists(self.preprocessed_dataset_path):
             makedirs(self.preprocessed_dataset_path)
             # parses the cleaned landmarks
@@ -135,8 +137,12 @@ class MotionLeap2Dataset(Dataset):
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
-        self.num_horizontal_landmarks = np.load(self.samples[0]["landmarks_horizontal"]).size
-        self.num_vertical_landmarks = np.load(self.samples[0]["landmarks_vertical"]).size
+        self.num_horizontal_landmarks = np.load(
+            self.samples[0]["landmarks_horizontal"]
+        ).size
+        self.num_vertical_landmarks = np.load(
+            self.samples[0]["landmarks_vertical"]
+        ).size
         self.num_landmarks = self.num_horizontal_landmarks + self.num_vertical_landmarks
 
         # mode-related attributes
@@ -208,7 +214,9 @@ class MotionLeap2Dataset(Dataset):
         return df
 
     @staticmethod
-    def preprocess_landmarks(df, landmarks_columns_indices, normalize_landmarks: bool =True):
+    def preprocess_landmarks(
+        df, landmarks_columns_indices, normalize_landmarks: bool = True
+    ):
         subject_ids, hands, poses, devices = [
             df[col].unique().tolist()
             for col in ["subject_id", "which_hand", "pose", "device"]
@@ -239,7 +247,9 @@ class MotionLeap2Dataset(Dataset):
                 standardized_data = (data - means) / (stds + 1e-7)
 
                 # normalize values between -1 and 1
-                mins, maxs = standardized_data.min(axis=0), standardized_data.max(axis=0)
+                mins, maxs = standardized_data.min(axis=0), standardized_data.max(
+                    axis=0
+                )
                 normalized_data = (
                     2 * (standardized_data - mins) / ((maxs - mins) - 1 + 1e-7)
                 )
@@ -249,7 +259,9 @@ class MotionLeap2Dataset(Dataset):
 
                 # assign the new data
                 # df.iloc[mask_indices, landmarks_columns_indices] = normalized_data
-                df_values[np.ix_(mask_indices, landmarks_columns_indices)] = normalized_data
+                df_values[np.ix_(mask_indices, landmarks_columns_indices)] = (
+                    normalized_data
+                )
 
         df_prep = pd.DataFrame(df_values, columns=df.columns)
 
@@ -329,11 +341,14 @@ class MotionLeap2Dataset(Dataset):
     def save_landmarks_data_on_disk(df, dataset_path, output_path, images_transforms):
         global process_row_landmarks
 
-        def process_row_landmarks(row_data, dataset_path, output_path, images_transforms, df_columns):
+        def process_row_landmarks(
+            row_data, dataset_path, output_path, images_transforms, df_columns
+        ):
             index, row = row_data
             try:
                 frame_id, subject_id, hand, pose = [
-                    str(row[col]) for col in ["frame_id", "subject_id", "which_hand", "pose"]
+                    str(row[col])
+                    for col in ["frame_id", "subject_id", "which_hand", "pose"]
                 ]
                 subject_id_z = subject_id.zfill(3)
                 frame_id_z = frame_id.zfill(3)
@@ -368,9 +383,16 @@ class MotionLeap2Dataset(Dataset):
                     os.makedirs(preprocessed_images_path, exist_ok=True)
 
                     for direction in ["left", "right"]:
-                        img_path = join(dataset_images_path, f"{frame_id_z}_{direction}.bmp")
+                        img_path = join(
+                            dataset_images_path, f"{frame_id_z}_{direction}.bmp"
+                        )
                         img = images_transforms(Image.open(img_path))
-                        img.save(join(preprocessed_images_path, f"{frame_id_z}_{direction}.png"))
+                        img.save(
+                            join(
+                                preprocessed_images_path,
+                                f"{frame_id_z}_{direction}.png",
+                            )
+                        )
 
             except Exception as e:
                 print(f"[Error] Failed processing frame {frame_id}: {e}")
@@ -403,7 +425,11 @@ class MotionLeap2Dataset(Dataset):
     ):
         assert images_needed in {"left", "right", "both"}, f"got {images_needed}"
         samples = []
-        subject_ids = [f for f in listdir(preprocessed_landmarks_path) if isdir(join(preprocessed_landmarks_path, f))]
+        subject_ids = [
+            f
+            for f in listdir(preprocessed_landmarks_path)
+            if isdir(join(preprocessed_landmarks_path, f))
+        ]
         hands = listdir(join(preprocessed_landmarks_path, subject_ids[0]))
         poses = listdir(join(preprocessed_landmarks_path, subject_ids[0], hands[0]))
         frame_ids = [
@@ -522,7 +548,7 @@ class MotionLeap2Dataset(Dataset):
 
     @staticmethod
     def _get_subject_ids() -> List[str]:
-        return sorted([str(i).zfill(3) for i in range(1, 21+1)])
+        return sorted([str(i).zfill(3) for i in range(1, 21 + 1)])
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
@@ -535,7 +561,7 @@ class MotionLeap2Dataset(Dataset):
                 elif key.endswith("right") and self.images_needed == "left":
                     continue
                 # loads the image
-                image = self.images_transforms(Image.open(sample[key]))
+                image = T.ToTensor()(self.images_transforms(Image.open(sample[key])))
                 # adjusts some keys if there is just one image needed
                 if "horizontal" in key and self.return_horizontal_images:
                     outs["image_horizontal"] = image
@@ -548,7 +574,7 @@ class MotionLeap2Dataset(Dataset):
                     outs[key] = torch.from_numpy(
                         np.load(sample[key], allow_pickle=True)
                     ).float()
-                
+
         # checks if the keys are correct
         if self.return_horizontal_landmarks and "landmarks_horizontal" not in outs:
             raise KeyError(
@@ -566,7 +592,7 @@ class MotionLeap2Dataset(Dataset):
             raise KeyError(
                 "image_vertical not in outs, but return_vertical_images is True"
             )
-        
+
         # returns the outputs
         return outs
 
