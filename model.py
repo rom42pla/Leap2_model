@@ -302,7 +302,7 @@ class HandGestureRecognitionModel(pl.LightningModule):
                 nn.Linear(512 * 4, landmarks_features_size),
                 nn.LayerNorm(landmarks_features_size),
                 (
-                    nn.LeakyReLU(inplace=True),
+                    nn.LeakyReLU(inplace=True)
                     if not (self.use_horizontal_images or self.use_vertical_images)
                     else nn.Identity()
                 ),

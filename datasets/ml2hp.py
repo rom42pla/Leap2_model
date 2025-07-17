@@ -28,7 +28,7 @@ class MotionLeap2Dataset(Dataset):
     def __init__(
         self,
         dataset_path,
-        preprocessed_landmarks_path="_ml2hp_preprocessed_landmarks",
+        preprocessed_landmarks_path="_ml2hp_preprocessed",
         images_needed="left",
         img_size=224,
         normalize_landmarks=True,
@@ -83,7 +83,10 @@ class MotionLeap2Dataset(Dataset):
                 )
             with open(join(self.preprocessed_dataset_path, "info.yaml"), "r") as fp:
                 info = yaml.safe_load(fp)
-            if info["normalized_landmarks"] != self.normalize_landmarks:
+            if (
+                info["normalized_landmarks"] != self.normalize_landmarks
+                or info["img_size"] != self.img_size
+            ):
                 shutil.rmtree(self.preprocessed_dataset_path)
                 print(
                     "rebuilding the preprocessed dataset because of different normalization"
@@ -123,6 +126,7 @@ class MotionLeap2Dataset(Dataset):
             )
             # saves the info about the dataset
             info = {
+                "img_size": self.img_size,
                 "normalized_landmarks": self.normalize_landmarks,
             }
             with open(join(self.preprocessed_dataset_path, "info.yaml"), "w") as fp:
@@ -445,55 +449,60 @@ class MotionLeap2Dataset(Dataset):
                 )
             )
         ]
+        
         for subject_id, hand, pose, frame_id in tqdm(
             list(itertools.product(subject_ids, hands, poses, frame_ids)),
             desc=f"Parsing samples",
         ):
-            if hand == "Left_Hand" and images_needed == "right":
-                continue
-            elif hand == "Right_Hand" and images_needed == "left":
-                continue
-            # parses the sample
-            sample = {
-                "subject_id": subject_id,
-                "hand": hand,
-                "pose": pose,
-            }
-            if poses_dict is not None:
-                if pose not in poses_dict:
-                    raise BaseException(
-                        f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
-                    )
-                sample["label"] = poses_dict[pose]
-            for device in ["Horizontal", "Vertical"]:
-                # parses the landmarks
-                sample[f"landmarks_{device.lower()}"] = join(
-                    preprocessed_landmarks_path,
-                    subject_id,
-                    hand,
-                    pose,
-                    device,
-                    "landmarks",
-                    f"{frame_id}.npy",
-                )
-                assert exists(
-                    sample[f"landmarks_{device.lower()}"]
-                ), f"{sample[f'landmarks_{device.lower()}']} does not exist"
-                # parses the images
-                for direction in ["left", "right"]:
-                    sample[f"image_{device.lower()}_{direction}"] = join(
+            try:
+                if hand == "Left_Hand" and images_needed == "right":
+                    continue
+                elif hand == "Right_Hand" and images_needed == "left":
+                    continue
+                # parses the sample
+                sample = {
+                    "subject_id": subject_id,
+                    "hand": hand,
+                    "pose": pose,
+                }
+                if poses_dict is not None:
+                    if pose not in poses_dict:
+                        raise BaseException(
+                            f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
+                        )
+                    sample["label"] = poses_dict[pose]
+                for device in ["Horizontal", "Vertical"]:
+                    # parses the landmarks
+                    sample[f"landmarks_{device.lower()}"] = join(
                         preprocessed_landmarks_path,
                         subject_id,
                         hand,
                         pose,
                         device,
-                        "images",
-                        f"{frame_id}_{direction}.png",
+                        "landmarks",
+                        f"{frame_id}.npy",
                     )
                     assert exists(
-                        sample[f"image_{device.lower()}_{direction}"]
-                    ), f"{sample[f'image_{device.lower()}_{direction}']} does not exist"
-            samples.append(sample)
+                        sample[f"landmarks_{device.lower()}"]
+                    ), f"{sample[f'landmarks_{device.lower()}']} does not exist"
+                    # parses the images
+                    for direction in ["left", "right"]:
+                        sample[f"image_{device.lower()}_{direction}"] = join(
+                            preprocessed_landmarks_path,
+                            subject_id,
+                            hand,
+                            pose,
+                            device,
+                            "images",
+                            f"{frame_id}_{direction}.png",
+                        )
+                        assert exists(
+                            sample[f"image_{device.lower()}_{direction}"]
+                        ), f"{sample[f'image_{device.lower()}_{direction}']} does not exist"
+                samples.append(sample)
+            except Exception as e:
+                print(f"Error parsing sample for {subject_id}, {hand}, {pose}, {frame_id}: {e}")
+                continue
         return samples
 
     def get_indices_per_subject(self) -> Dict[str, List[int]]:
