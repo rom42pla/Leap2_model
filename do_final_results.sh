@@ -18,6 +18,14 @@
 # python do_results.py --use_vertical_landmarks --normalize_landmarks
 
 ##################
+# Tiny HGR dataset
+##################
+
+# python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks --max_epochs 5
+# python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_image --normalize_landmarks --max_epochs 5
+# python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_landmarks --normalize_landmarks --max_epochs 30
+
+##################
 # MMHGDHGR dataset
 ##################
 
@@ -29,10 +37,4 @@
 # python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --normalize_landmarks --max_epochs 10
 # python do_results.py --validation loso --train_image_backbone --dataset=mmhgdhgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks --max_epochs 10
 
-##################
-# Tiny HGR dataset
-##################
 
-python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_image --use_horizontal_landmarks --normalize_landmarks --max_epochs 5
-python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_image --normalize_landmarks --max_epochs 5
-python do_results.py --validation loso --train_image_backbone --dataset=tiny_hgr --use_horizontal_landmarks --normalize_landmarks --max_epochs 30

@@ -1,4 +1,6 @@
 from copy import deepcopy
+from functools import partial
+from multiprocessing import Pool
 from pprint import pprint
 import itertools
 import os
@@ -26,9 +28,9 @@ class MotionLeap2Dataset(Dataset):
     def __init__(
         self,
         dataset_path,
-        preprocessed_landmarks_path="_preprocessed_landmarks",
+        preprocessed_landmarks_path="_ml2hp_preprocessed_landmarks",
         images_needed="left",
-        img_size=512,
+        img_size=224,
         normalize_landmarks=True,
     ):
         assert isdir(dataset_path)
@@ -56,6 +58,22 @@ class MotionLeap2Dataset(Dataset):
             "C": 15,
             "Two": 16,
         }
+
+        # preprocessing for the images
+        assert isinstance(
+            img_size, int
+        ), f"img_size must be an int, got {img_size} ({type(img_size)})"
+        assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
+        self.img_channels = 1
+        self.img_size = img_size
+        self.img_shape = (1, self.img_size, self.img_size)
+        self.images_transforms = T.Compose(
+            [
+                T.Resize(size=self.img_size),
+                T.Grayscale(num_output_channels=1),
+                # T.ToTensor(),
+            ]
+        )
 
         self.preprocessed_dataset_path = preprocessed_landmarks_path
         if isdir(self.preprocessed_dataset_path):
@@ -99,6 +117,7 @@ class MotionLeap2Dataset(Dataset):
                 self.df_landmarks_prep,
                 self.dataset_path,
                 self.preprocessed_dataset_path,
+                images_transforms=self.images_transforms,
             )
             # saves the info about the dataset
             info = {
@@ -119,22 +138,6 @@ class MotionLeap2Dataset(Dataset):
         self.num_horizontal_landmarks = np.load(self.samples[0]["landmarks_horizontal"]).size
         self.num_vertical_landmarks = np.load(self.samples[0]["landmarks_vertical"]).size
         self.num_landmarks = self.num_horizontal_landmarks + self.num_vertical_landmarks
-
-        # preprocessing for the images
-        assert isinstance(
-            img_size, int
-        ), f"img_size must be an int, got {img_size} ({type(img_size)})"
-        assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
-        self.img_channels = 1
-        self.img_size = img_size
-        self.img_shape = (1, self.img_size, self.img_size)
-        self.images_transforms = T.Compose(
-            [
-                T.Resize(size=self.img_size),
-                T.Grayscale(num_output_channels=1),
-                T.ToTensor(),
-            ]
-        )
 
         # mode-related attributes
         self.return_horizontal_landmarks = True
@@ -282,48 +285,117 @@ class MotionLeap2Dataset(Dataset):
 
         return df
 
+    # @staticmethod
+    # def save_landmarks_data_on_disk(df, dataset_path, output_path, images_transforms):
+    #     for row in tqdm(
+    #         pl.from_pandas(df).iter_rows(named=True),
+    #         desc=f"Saving preprocessed landmarks to {output_path}",
+    #         total=len(df),
+    #     ):
+    #         # parses all the metas
+    #         frame_id, subject_id, hand, pose = [
+    #             str(row[col])
+    #             for col in ["frame_id", "subject_id", "which_hand", "pose"]
+    #         ]
+    #         landmarks_path = join(output_path, subject_id.zfill(3), hand, pose)
+    #         # eventually creates the folder
+    #         for device in ["Horizontal", "Vertical"]:
+    #             # retrieves the landmarks from the big dataframe
+    #             arr_landmarks = np.asarray(
+    #                 [
+    #                     float(row[col])
+    #                     for col in df.columns
+    #                     if col.endswith(f"_{device.lower()}")
+    #                 ]
+    #             ).astype(np.float32)
+    #             # saves the landmarks to disk
+    #             landmarks_per_device_path = join(landmarks_path, device, "landmarks")
+    #             if not isdir(landmarks_per_device_path):
+    #                 os.makedirs(landmarks_per_device_path)
+    #             np.save(
+    #                 join(landmarks_per_device_path, f"{frame_id.zfill(3)}.npy"),
+    #                 arr_landmarks,
+    #             )
+    #             # saves images on disk
+    #             dataset_images_path = join(dataset_path, str(subject_id).zfill(3), hand, pose, device, "images")
+    #             preprocessed_images_path = join(output_path, str(subject_id).zfill(3), hand, pose, device, "images")
+    #             if not isdir(preprocessed_images_path):
+    #                 os.makedirs(preprocessed_images_path)
+    #             for direction in ["left", "right"]:
+    #                 img = images_transforms(Image.open(join(dataset_images_path, f"{frame_id.zfill(3)}_{direction}.bmp")))
+    #                 img.save(join(preprocessed_images_path, f"{frame_id.zfill(3)}_{direction}.jpg"))
+
     @staticmethod
-    def save_landmarks_data_on_disk(df, dataset_path, output_path, img_size=224):
-        for row in tqdm(
-            pl.from_pandas(df).iter_rows(named=True),
-            desc=f"Saving preprocessed landmarks to {output_path}",
-            total=len(df),
-        ):
-            # parses all the metas
-            frame_id, subject_id, hand, pose = [
-                str(row[col])
-                for col in ["frame_id", "subject_id", "which_hand", "pose"]
-            ]
-            landmarks_path = join(output_path, subject_id.zfill(3), hand, pose)
-            # eventually creates the folder
-            for device in ["Horizontal", "Vertical"]:
-                # retrieves the landmarks from the big dataframe
-                arr_landmarks = np.asarray(
-                    [
-                        float(row[col])
-                        for col in df.columns
-                        if col.endswith(f"_{device.lower()}")
-                    ]
-                ).astype(np.float32)
-                # saves the landmarks to disk
-                landmarks_per_device_path = join(landmarks_path, device, "landmarks")
-                if not isdir(landmarks_per_device_path):
-                    os.makedirs(landmarks_per_device_path)
-                np.save(
-                    join(landmarks_per_device_path, f"{frame_id.zfill(3)}.npy"),
-                    arr_landmarks,
+    def save_landmarks_data_on_disk(df, dataset_path, output_path, images_transforms):
+        global process_row_landmarks
+
+        def process_row_landmarks(row_data, dataset_path, output_path, images_transforms, df_columns):
+            index, row = row_data
+            try:
+                frame_id, subject_id, hand, pose = [
+                    str(row[col]) for col in ["frame_id", "subject_id", "which_hand", "pose"]
+                ]
+                subject_id_z = subject_id.zfill(3)
+                frame_id_z = frame_id.zfill(3)
+
+                landmarks_path = join(output_path, subject_id_z, hand, pose)
+
+                for device in ["Horizontal", "Vertical"]:
+                    # extract relevant landmark columns
+                    arr_landmarks = np.asarray(
+                        [
+                            float(row[col])
+                            for col in df_columns
+                            if col.endswith(f"_{device.lower()}")
+                        ]
+                    ).astype(np.float32)
+
+                    landmarks_device_path = join(landmarks_path, device, "landmarks")
+                    os.makedirs(landmarks_device_path, exist_ok=True)
+
+                    np.save(
+                        join(landmarks_device_path, f"{frame_id_z}.npy"),
+                        arr_landmarks,
+                    )
+
+                    # handle images
+                    dataset_images_path = join(
+                        dataset_path, subject_id_z, hand, pose, device, "images"
+                    )
+                    preprocessed_images_path = join(
+                        output_path, subject_id_z, hand, pose, device, "images"
+                    )
+                    os.makedirs(preprocessed_images_path, exist_ok=True)
+
+                    for direction in ["left", "right"]:
+                        img_path = join(dataset_images_path, f"{frame_id_z}_{direction}.bmp")
+                        img = images_transforms(Image.open(img_path))
+                        img.save(join(preprocessed_images_path, f"{frame_id_z}_{direction}.png"))
+
+            except Exception as e:
+                print(f"[Error] Failed processing frame {frame_id}: {e}")
+
+        # Convert to Polars and keep column names for landmark extraction
+        df_polars = pl.from_pandas(df)
+        df_columns = df.columns  # Needed in each process for column lookup
+
+        with Pool(processes=os.cpu_count()) as pool:
+            list(
+                tqdm(
+                    pool.imap(
+                        partial(
+                            process_row_landmarks,
+                            dataset_path=dataset_path,
+                            output_path=output_path,
+                            images_transforms=images_transforms,
+                            df_columns=df_columns,
+                        ),
+                        enumerate(df_polars.iter_rows(named=True)),
+                    ),
+                    total=len(df),
+                    desc=f"Saving preprocessed landmarks to {output_path}",
                 )
-                # # saves images on disk
-                # dataset_images_path = join(dataset_path, str(subject_id).zfill(3), hand, pose, device, "images")
-                # preprocessed_images_path = join(output_path, str(subject_id).zfill(3), hand, pose, device, "images")
-                # if not isdir(preprocessed_images_path):
-                #     os.makedirs(preprocessed_images_path)
-                # for image_name in listdir(dataset_images_path):
-                #     if not image_name.endswith(".bmp"):
-                #         continue
-                #     image = Image.open(join(dataset_images_path, image_name))
-                #     image = image.resize((img_size, img_size))
-                #     image.save(join(preprocessed_images_path, image_name[-4:]+".jpg"), optimize=True, quality=50)
+            )
 
     @staticmethod
     def parse_samples(
@@ -331,14 +403,14 @@ class MotionLeap2Dataset(Dataset):
     ):
         assert images_needed in {"left", "right", "both"}, f"got {images_needed}"
         samples = []
-        subject_ids = [f for f in listdir(dataset_path) if isdir(join(dataset_path, f))]
-        hands = listdir(join(dataset_path, subject_ids[0]))
-        poses = listdir(join(dataset_path, subject_ids[0], hands[0]))
+        subject_ids = [f for f in listdir(preprocessed_landmarks_path) if isdir(join(preprocessed_landmarks_path, f))]
+        hands = listdir(join(preprocessed_landmarks_path, subject_ids[0]))
+        poses = listdir(join(preprocessed_landmarks_path, subject_ids[0], hands[0]))
         frame_ids = [
             filename.split("_")[0].zfill(3)
             for filename in listdir(
                 join(
-                    dataset_path,
+                    preprocessed_landmarks_path,
                     subject_ids[0],
                     hands[0],
                     poses[0],
@@ -384,13 +456,13 @@ class MotionLeap2Dataset(Dataset):
                 # parses the images
                 for direction in ["left", "right"]:
                     sample[f"image_{device.lower()}_{direction}"] = join(
-                        dataset_path,
+                        preprocessed_landmarks_path,
                         subject_id,
                         hand,
                         pose,
                         device,
                         "images",
-                        f"{frame_id}_{direction}.bmp",
+                        f"{frame_id}_{direction}.png",
                     )
                     assert exists(
                         sample[f"image_{device.lower()}_{direction}"]

@@ -46,7 +46,8 @@ class HandGestureRecognitionModel(pl.LightningModule):
         image_backbone_name: str | None = "resnet18",
         landmarks_backbone_name: str | None = "mlp",
         use_data_augmentation: bool = True,
-        lr: float = 5e-5,
+        lr: float = 1e-3,
+        num_epochs: int = 1,
         linear_dropout_p: float = 0.2,
         train_image_backbone: bool = False,
         **kwargs,
@@ -166,6 +167,9 @@ class HandGestureRecognitionModel(pl.LightningModule):
         # optimizer params
         assert lr > 0
         self.lr = lr
+
+        assert num_epochs > 0 and isinstance(num_epochs, int), num_epochs
+        self.num_epochs = num_epochs
 
         self.epoch_metrics = {}
 
@@ -292,10 +296,21 @@ class HandGestureRecognitionModel(pl.LightningModule):
             landmarks_backbone = nn.Sequential(
                 # nn.Dropout(self.linear_dropout_p),
                 nn.Linear(self.num_landmarks, 512 * 4),
+                nn.LayerNorm(512 * 4),
                 nn.LeakyReLU(inplace=True),
                 nn.Dropout(self.linear_dropout_p),
                 nn.Linear(512 * 4, landmarks_features_size),
-                nn.LeakyReLU(inplace=True),
+                nn.LayerNorm(landmarks_features_size),
+                (
+                    nn.LeakyReLU(inplace=True),
+                    if not (self.use_horizontal_images or self.use_vertical_images)
+                    else nn.Identity()
+                ),
+                (
+                    nn.Dropout(self.linear_dropout_p)
+                    if not (self.use_horizontal_images or self.use_vertical_images)
+                    else nn.Identity()
+                ),
             )
             # landmarks_backbone = nn.Sequential(
             #     nn.Linear(self.num_landmarks, landmarks_features_size),
@@ -305,6 +320,7 @@ class HandGestureRecognitionModel(pl.LightningModule):
             raise NotImplementedError(
                 f"got landmarks backbone '{name}', expected one of {self._possible_landmarks_backbones}"
             )
+        landmarks_backbone.apply(self.initialize_weights_xavier)
         landmarks_embedder = lambda landmarks: landmarks_backbone(landmarks)
         return landmarks_features_size, landmarks_backbone, landmarks_embedder
 
@@ -321,6 +337,7 @@ class HandGestureRecognitionModel(pl.LightningModule):
                     self.image_features_size + self.landmarks_features_size,
                     512 * 4,
                 ),
+                nn.LayerNorm(512 * 4),
                 nn.LeakyReLU(inplace=True),
                 nn.Dropout(self.linear_dropout_p),
                 nn.Linear(
@@ -328,6 +345,7 @@ class HandGestureRecognitionModel(pl.LightningModule):
                     self.num_classes,
                 ),
             )
+            cls_head.apply(self.initialize_weights_xavier)
             # cls_head = nn.Sequential(
             #     nn.Linear(
             #         self.image_features_size + self.landmarks_features_size,
@@ -363,6 +381,7 @@ class HandGestureRecognitionModel(pl.LightningModule):
             raise NotImplementedError(
                 f"merging method {self._merging_method} not implemented"
             )
+        
         return image_features_embedder, landmarks_features_embedder, cls_head, classify
 
     @staticmethod
@@ -372,6 +391,13 @@ class HandGestureRecognitionModel(pl.LightningModule):
         plt.imshow(img, cmap="gray")
         plt.axis("off")
         plt.show()
+
+    @staticmethod
+    def initialize_weights_xavier(module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         if self.train_image_backbone:
@@ -388,6 +414,8 @@ class HandGestureRecognitionModel(pl.LightningModule):
         (
             self.image_features_size,
             self.img_size,
+            self.img_mean,
+            self.img_std,
             self._image_backbone,
             self.image_embedder,
         ) = self._parse_image_backbone(name=self.image_backbone_name)
@@ -395,27 +423,33 @@ class HandGestureRecognitionModel(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             # [
-            #     {"params": self.adapter.parameters(), "lr": 5e-4}, # self.adapter is included here
+            #     # {"params": self.adapter.parameters(), "lr": 5e-4}, # self.adapter is included here
             #     {
             #         "params": [
             #             p
             #             for module in [
+            #                 self.adapter,
             #                 self.landmarks_backbone,
             #                 # self.landmarks_embedder,
-            #                 self.image_features_embedder,
-            #                 self.landmarks_features_embedder,
+            #                 # self.image_features_embedder,
+            #                 # self.landmarks_features_embedder,
             #                 self.cls_head,
             #             ]
             #             for p in module.parameters()
             #         ],
-            #         "lr": 1e-5,
+            #         "lr": self.lr,
             #     },
             # ],
             self.parameters(),
             lr=self.lr,
-            weight_decay=5e-3,
         )
-        return optimizer
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.num_epochs * 2, eta_min=self.lr * 0.01
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": lr_scheduler,
+        }
 
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
         optimizer.zero_grad(set_to_none=True)

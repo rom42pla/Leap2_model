@@ -123,6 +123,8 @@ def main(
         use_horizontal_landmarks=cfg_dict["use_horizontal_landmarks"],
         use_vertical_landmarks=cfg_dict["use_vertical_landmarks"],
         train_image_backbone=cfg_dict["train_image_backbone"],
+        num_epochs=cfg_dict["max_epochs"],
+        lr=cfg_dict["lr"],
     )
 
     # saves the initial weights of the model
@@ -197,6 +199,7 @@ def main(
         trainer = Trainer(
             logger=wandb_logger,
             accelerator=device,
+            log_every_n_steps=10,
             precision="16-mixed",
             gradient_clip_val=1.0,
             max_epochs=cfg_dict["max_epochs"],

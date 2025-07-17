@@ -102,7 +102,7 @@ def main():
     parser.add_argument(
         "--lr",
         type=float,
-        default=5e-5,
+        default=5e-4,
         help="The learning rate of AdamW.",
     )
     line_args = parser.parse_args()

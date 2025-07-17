@@ -329,7 +329,7 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 save_dir = join(output_path, subject_id, pose, "images")
                 os.makedirs(save_dir, exist_ok=True)
 
-                img.save(join(save_dir, f"{frame_id}.jpg"))
+                img.save(join(save_dir, f"{frame_id}.png"))
             except Exception as e:
                 print(f"Error processing {frame_id}: {e}")
 
@@ -393,7 +393,7 @@ class TinyHandGestureRecognitionDataset(Dataset):
                         subject_id,
                         pose,
                         "images",
-                        f"{frame_id}.jpg",
+                        f"{frame_id}.png",
                     )
                     assert exists(sample["image"]), f"{sample['image']} does not exist"
                     samples.append(deepcopy(sample))
