@@ -19,7 +19,8 @@ from tqdm import tqdm
 from datasets.mmhgdhgr import MultiModalHandGestureDatasetForHandGestureRecognition
 from datasets.ml2hp import MotionLeap2Dataset
 
-from model import BWHandGestureRecognitionModel
+from datasets.tiny_hgr import TinyHandGestureRecognitionDataset
+from model import HandGestureRecognitionModel
 from utils import (
     get_device_from_string,
     get_loso_runs,
@@ -39,7 +40,7 @@ def main(
     torch.set_float32_matmul_precision("medium")
 
     # loads the configuration file
-    num_workers = os.cpu_count() // 2  # type: ignore
+    num_workers = os.cpu_count()  # type: ignore
     with open(cfg, "r") as fp:
         cfg_dict = yaml.safe_load(fp)
     pprint(cfg_dict)
@@ -69,6 +70,24 @@ def main(
         dataset = MultiModalHandGestureDatasetForHandGestureRecognition(
             dataset_path=cfg_dict["dataset_path"],
             normalize_landmarks=cfg_dict["normalize_landmarks"],
+            img_size=224,
+        )
+        dataset.set_mode(
+            return_images=any(
+                [cfg_dict["use_horizontal_image"], cfg_dict["use_vertical_image"]]
+            ),
+            return_landmarks=any(
+                [
+                    cfg_dict["use_horizontal_landmarks"],
+                    cfg_dict["use_vertical_landmarks"],
+                ]
+            ),
+        )
+    elif cfg_dict["dataset"] == "tiny_hgr":
+        dataset = TinyHandGestureRecognitionDataset(
+            dataset_path=cfg_dict["dataset_path"],
+            normalize_landmarks=cfg_dict["normalize_landmarks"],
+            img_size=224,
         )
         dataset.set_mode(
             return_images=any(
@@ -92,7 +111,7 @@ def main(
 
     # setup the model
     device = get_device_from_string(cfg_dict["device"])  # "cuda" or "cpu"
-    model = BWHandGestureRecognitionModel(
+    model = HandGestureRecognitionModel(
         num_labels=dataset.num_labels,
         num_landmarks=dataset.num_landmarks,
         img_channels=dataset.img_channels,
@@ -190,7 +209,7 @@ def main(
         trainer.fit(model, dataloader_train, dataloader_val)
 
         # compute metrics using the final model
-        model = BWHandGestureRecognitionModel.load_from_checkpoint(
+        model = HandGestureRecognitionModel.load_from_checkpoint(
             checkpoint_callback.best_model_path,
             map_location=device,
             strict=False,

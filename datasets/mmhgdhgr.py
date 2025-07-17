@@ -407,68 +407,6 @@ class MultiModalHandGestureDatasetForHandGestureRecognition(Dataset):
                             sample["image"]
                         ), f"{sample['image']} does not exist"
                         samples.append(deepcopy(sample))
-        # splits = [s.split("_")[0] for s in listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0]))]
-        # poses = listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0], f"{splits[0]}_pose"))
-        # frame_ids = [
-        #     filename.split("_")[0].zfill(3)
-        #     for filename in listdir(
-        #         join(
-        #             dataset_path,
-        #             "near-infrared",
-        #             subject_ids[0],
-        #             poses[0],
-        #         )
-        #     )
-        # ]
-        # for subject_id, pose in tqdm(
-        #     list(itertools.product(subject_ids, poses, frame_ids)),
-        #     desc=f"Parsing samples",
-        # ):
-        #     if hand == "Left_Hand" and images_needed == "right":
-        #         continue
-        #     elif hand == "Right_Hand" and images_needed == "left":
-        #         continue
-        #     # parses the sample
-        #     sample = {
-        #         "subject_id": subject_id,
-        #         "hand": hand,
-        #         "pose": pose,
-        #     }
-        #     if poses_dict is not None:
-        #         if pose not in poses_dict:
-        #             raise BaseException(
-        #                 f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
-        #             )
-        #         sample["label"] = poses_dict[pose]
-        #     for device in ["Horizontal", "Vertical"]:
-        #         # parses the landmarks
-        #         sample[f"landmarks_{device.lower()}"] = join(
-        #             preprocessed_landmarks_path,
-        #             subject_id,
-        #             hand,
-        #             pose,
-        #             device,
-        #             "landmarks",
-        #             f"{frame_id}.npy",
-        #         )
-        #         assert exists(
-        #             sample[f"landmarks_{device.lower()}"]
-        #         ), f"{sample[f'landmarks_{device.lower()}']} does not exist"
-        #         # parses the images
-        #         for direction in ["left", "right"]:
-        #             sample[f"image_{device.lower()}_{direction}"] = join(
-        #                 dataset_path,
-        #                 subject_id,
-        #                 hand,
-        #                 pose,
-        #                 device,
-        #                 "images",
-        #                 f"{frame_id}_{direction}.bmp",
-        #             )
-        #             assert exists(
-        #                 sample[f"image_{device.lower()}_{direction}"]
-        #             ), f"{sample[f'image_{device.lower()}_{direction}']} does not exist"
-        #     samples.append(sample)
         return samples
 
     def get_indices_per_subject(self) -> Dict[str, List[int]]:
@@ -517,7 +455,10 @@ if __name__ == "__main__":
         dataset_path="../../datasets/mmhgdhgr",
         normalize_landmarks=True,
     )
-
+    # # plots the image
+    # import matplotlib.pyplot as plt
+    # plt.imshow(dataset[0]["image"][0].numpy())
+    # plt.show()
     # tests
     for (
         return_images,

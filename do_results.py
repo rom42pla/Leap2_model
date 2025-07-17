@@ -12,9 +12,9 @@ import torch
 import yaml
 import generate_configs
 import train
-from model import BWHandGestureRecognitionModel
+from model import HandGestureRecognitionModel
 
-_possible_datasets = ["ml2hp", "mmhgdhgr"]
+_possible_datasets = ["ml2hp", "mmhgdhgr", "tiny_hgr"]
 _possible_validations = ["loso", "simple"]
 def main():
     
@@ -93,6 +93,18 @@ def main():
         required=False,
         default=False,
     )
+    parser.add_argument(
+        "--max_epochs",
+        type=int,
+        default=3,
+        help="The maximum amount of epochs.",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=5e-5,
+        help="The learning rate of AdamW.",
+    )
     line_args = parser.parse_args()
 
     if line_args.dataset not in {"mmhgdhgr"} and line_args.validation == "simple":
@@ -108,10 +120,10 @@ def main():
         line_args.image_backbone is not None or line_args.landmarks_backbone is not None
     ), "You must provide at least one of --image_backbone or --landmarks_backbone."
     _possible_image_backbones = (
-        BWHandGestureRecognitionModel._possible_image_backbones | {"all"}
+        HandGestureRecognitionModel._possible_image_backbones | {"all"}
     )
     _possible_landmarks_backbones = (
-        BWHandGestureRecognitionModel._possible_landmarks_backbones | {"all"}
+        HandGestureRecognitionModel._possible_landmarks_backbones | {"all"}
     )
     assert (
         line_args.image_backbone in _possible_image_backbones
@@ -131,6 +143,7 @@ def main():
     elif not line_args.use_horizontal_image and not line_args.use_vertical_image:
         batch_size = 512
 
+    # dataset-specific parameters
     cfg = generate_configs.create_dict(
         dataset=line_args.dataset,
         datasets_path="../../datasets",
@@ -153,8 +166,8 @@ def main():
         normalize_landmarks=line_args.normalize_landmarks,
         batch_size=batch_size,
         accumulate_grad_batches=accumulate_grad_batches,
-        max_epochs=3 if line_args.dataset == "ml2hp" else 30,
-        lr=1e-4,
+        max_epochs=line_args.max_epochs,
+        lr=line_args.lr,
         train_image_backbone=line_args.train_image_backbone,
     )
     filename = f"{cfg['name']}.yaml"

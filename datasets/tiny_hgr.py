@@ -1,4 +1,6 @@
 from copy import deepcopy
+from functools import partial
+from multiprocessing import Pool
 from pprint import pprint
 import itertools
 import os
@@ -25,8 +27,8 @@ class TinyHandGestureRecognitionDataset(Dataset):
     def __init__(
         self,
         dataset_path,
-        preprocessed_landmarks_path="_tiny_hgr_preprocessed_landmarks",
-        img_size=256,
+        preprocessed_landmarks_path="_tiny_hgr_preprocessed",
+        img_size=1080,
         normalize_landmarks=True,
     ):
         assert isdir(dataset_path)
@@ -36,6 +38,7 @@ class TinyHandGestureRecognitionDataset(Dataset):
         self.poses_dict = {
             "fist": 0,
             "l": 1,
+            "I": 1,  # there's an error for tomas_2
             "ok": 2,
             "palm": 3,
             "pointer": 4,
@@ -43,7 +46,23 @@ class TinyHandGestureRecognitionDataset(Dataset):
             "thumb up": 6,
         }
 
+        # preprocessing for the images
+        assert isinstance(
+            img_size, int
+        ), f"img_size must be an int, got {img_size} ({type(img_size)})"
+        assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
+        self.img_channels = 3
+        self.img_size = img_size
+        self.img_shape = (1, self.img_size, self.img_size)
+        self.images_transforms = T.Compose(
+            [
+                T.Resize(size=self.img_size),
+                T.CenterCrop(size=self.img_size),
+            ]
+        )
+
         self.preprocessed_dataset_path = preprocessed_landmarks_path
+
         if isdir(self.preprocessed_dataset_path):
             # checks if the info.yaml file exists
             if not exists(join(self.preprocessed_dataset_path, "info.yaml")):
@@ -53,8 +72,11 @@ class TinyHandGestureRecognitionDataset(Dataset):
             # creates the info.yaml file
             with open(join(self.preprocessed_dataset_path, "info.yaml"), "r") as fp:
                 info = yaml.safe_load(fp)
-            # eventually delete the existing saved landmarks
-            if info["normalized_landmarks"] != self.normalize_landmarks:
+            # eventually delete the preprocessed dataset if the normalization or img_size is different
+            if (
+                info["normalized_landmarks"] != self.normalize_landmarks
+                or info["img_size"] != self.img_size
+            ):
                 shutil.rmtree(self.preprocessed_dataset_path)
                 print(
                     "rebuilding the preprocessed dataset because of different normalization"
@@ -88,8 +110,16 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 landmarks_columns_indices=self.landmarks_columns_indices,
                 output_path=self.preprocessed_dataset_path,
             )
+            # save the preprocessed images on disk
+            self.save_images_on_disk(
+                df=self.df_landmarks_prep,
+                dataset_path=self.dataset_path,
+                output_path=self.preprocessed_dataset_path,
+                images_transforms=self.images_transforms,
+            )
             # saves the info about the dataset
             info = {
+                "img_size": self.img_size,
                 "normalized_landmarks": self.normalize_landmarks,
             }
             with open(join(self.preprocessed_dataset_path, "info.yaml"), "w") as fp:
@@ -98,29 +128,12 @@ class TinyHandGestureRecognitionDataset(Dataset):
         # loads the infos for each sample
         self.samples = self.parse_samples(
             dataset_path=self.dataset_path,
-            preprocessed_landmarks_path=self.preprocessed_dataset_path,
+            preprocessed_dataset_path=self.preprocessed_dataset_path,
             poses_dict=self.poses_dict,
         )
         self.subject_ids = {sample["subject_id"] for sample in self.samples}
         self.num_labels = len(self.poses_dict)
         self.num_landmarks = np.load(self.samples[0]["landmarks"]).size
-
-        # preprocessing for the images
-        assert isinstance(
-            img_size, int
-        ), f"img_size must be an int, got {img_size} ({type(img_size)})"
-        assert img_size >= 1, f"img_size must be >= 1, got {img_size}"
-        self.img_channels = 1
-        self.img_size = img_size
-        self.img_shape = (1, self.img_size, self.img_size)
-        self.images_transforms = T.Compose(
-            [
-                T.Resize(size=self.img_size),
-                T.CenterCrop(size=self.img_size),
-                T.Grayscale(num_output_channels=1),
-                T.ToTensor(),
-            ]
-        )
 
         # mode-related attributes
         self.return_landmarks = True
@@ -140,7 +153,9 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 "path": "frame_id",
             }
         )
-        df_landmarks['frame_id'] = df_landmarks['frame_id'].apply(lambda x: basename(x).split("\\")[-1])
+        df_landmarks["frame_id"] = df_landmarks["frame_id"].apply(
+            lambda x: basename(x).split("\\")[-1]
+        )
         return df_landmarks
 
     @staticmethod
@@ -203,20 +218,20 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 np.float32
             )
             if data.size == 0:
-                print(f"skipping {subject_id}, {pose} because there are no landmarks")
+                # print(f"skipping {subject_id}, {pose} because there are no landmarks")
                 continue
             if normalize_landmarks:
                 normalized_data = np.copy(data).reshape(-1, 21, 2)
 
                 for i_sample in range(normalized_data.shape[0]):
-                    sample = normalized_data[i_sample]    
+                    sample = normalized_data[i_sample]
                     for i in range(sample.shape[0]):
-                        if ((sample[i,0] + sample[i,1]) != 0):
-                            x_center = sample[i,0]
-                            y_center = sample[i,1]
+                        if (sample[i, 0] + sample[i, 1]) != 0:
+                            x_center = sample[i, 0]
+                            y_center = sample[i, 1]
                             for k in range(2, sample.shape[1], 2):
-                                sample[i,k] = sample[i,k] - x_center
-                                sample[i,k+1] = sample[i,k+1] - y_center
+                                sample[i, k] = sample[i, k] - x_center
+                                sample[i, k + 1] = sample[i, k + 1] - y_center
                     normalized_data[i_sample] = sample
 
                 normalized_data = normalized_data.reshape(-1, data.shape[1])
@@ -245,35 +260,6 @@ class TinyHandGestureRecognitionDataset(Dataset):
 
         df_prep = pd.DataFrame(df_values, columns=df.columns)
 
-        # # splits the df into horizontal and vertical ones, based on the device used
-        # df_horizontal = df_prep[df_prep["device"] == "Horizontal"]
-        # df_vertical = df_prep[df_prep["device"] == "Vertical"]
-        # assert (
-        #     df_horizontal.shape == df_vertical.shape
-        # ), f"{df_horizontal.shape} != {df_vertical.shape}"
-
-        # # merge the two dataframes in a single one
-        # id_cols = ["frame_id", "subject_id", "which_hand", "pose"]
-        # df = pd.merge(
-        #     left=df_horizontal,
-        #     right=df_vertical,
-        #     how="inner",
-        #     on=id_cols,
-        #     suffixes=("_horizontal", "_vertical"),
-        # )
-        # assert (
-        #     df.shape[0] == df_horizontal.shape[0]
-        # ), f"{df.shape} != {df_horizontal.shape}"
-        # assert all(
-        #     [col in df.columns for col in id_cols]
-        # ), f"{id_cols} not in {df.columns}"
-        # df = df.reset_index().drop(
-        #     columns=[
-        #         col
-        #         for col in df.columns
-        #         if col.startswith("device") or col.startswith("pose_index")
-        #     ]
-        # )
         return df_prep
 
     @staticmethod
@@ -297,7 +283,7 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 [float(row[col]) for col in landmarks_columns]
             ).astype(np.float32)
             # saves the landmarks to disk
-            path = join(output_path, subject_id, pose)
+            path = join(output_path, subject_id, pose, "landmarks")
             if not isdir(path):
                 os.makedirs(path)
             np.save(
@@ -305,112 +291,112 @@ class TinyHandGestureRecognitionDataset(Dataset):
                 arr_landmarks,
             )
 
+    # @staticmethod
+    # def save_images_on_disk(df, dataset_path, output_path, images_transforms):
+    #     for _, row in tqdm(
+    #         df.iterrows(),
+    #         desc=f"Saving preprocessed images to {output_path}",
+    #         total=len(df),
+    #     ):
+    #         # parses all the metas
+    #         frame_id, subject_id, pose = [
+    #             str(row[col]) for col in ["frame_id", "subject_id", "pose"]
+    #         ]
+    #         # loads the image from the big dataframe
+    #         img = images_transforms(Image.open(join(dataset_path, subject_id, pose, frame_id)))
+    #         # saves the landmarks to disk
+    #         path = join(output_path, subject_id, pose, "images")
+    #         if not isdir(path):
+    #             os.makedirs(path)
+    #         # saves the image
+    #         img.save(
+    #             join(path, f"{frame_id}.jpg"),
+    #         )
+
     @staticmethod
-    def parse_samples(dataset_path, preprocessed_landmarks_path, poses_dict):
-        samples = []
-        subject_ids = [f for f in listdir(join(preprocessed_landmarks_path))]
-        for subject_id in subject_ids:
-            for pose in listdir(
-                join(
-                    preprocessed_landmarks_path, subject_id
+    def save_images_on_disk(df, dataset_path, output_path, images_transforms):
+        global process_row
+
+        def process_row(row_data, dataset_path, output_path, images_transforms):
+            index, row = row_data
+            frame_id, subject_id, pose = [
+                str(row[col]) for col in ["frame_id", "subject_id", "pose"]
+            ]
+            try:
+                img_path = join(dataset_path, subject_id, pose, frame_id)
+                img = images_transforms(Image.open(img_path))
+
+                save_dir = join(output_path, subject_id, pose, "images")
+                os.makedirs(save_dir, exist_ok=True)
+
+                img.save(join(save_dir, f"{frame_id}.jpg"))
+            except Exception as e:
+                print(f"Error processing {frame_id}: {e}")
+
+        # Use a pool of workers to process rows in parallel
+        with Pool(processes=os.cpu_count()) as pool:
+            list(
+                tqdm(
+                    pool.imap(
+                        partial(
+                            process_row,
+                            dataset_path=dataset_path,
+                            output_path=output_path,
+                            images_transforms=images_transforms,
+                        ),
+                        df.iterrows(),
+                    ),
+                    total=len(df),
+                    desc=f"Saving preprocessed images to {output_path}",
                 )
-            ):
+            )
+
+    @staticmethod
+    def parse_samples(dataset_path, preprocessed_dataset_path, poses_dict):
+        samples = []
+        subject_ids = [
+            f
+            for f in listdir(preprocessed_dataset_path)
+            if isdir(join(preprocessed_dataset_path, f))
+        ]
+        for subject_id in subject_ids:
+            for pose in listdir(join(preprocessed_dataset_path, subject_id)):
                 sample = {
                     "subject_id": subject_id,
                     "pose": pose,
                     "label": poses_dict[pose],
                 }
+
                 for frame_id in [
-                    s.split(".")[0]
+                    ".".join(s.split(".")[:-1])
                     for s in listdir(
                         join(
-                            preprocessed_landmarks_path,
+                            preprocessed_dataset_path,
                             subject_id,
                             pose,
+                            "images",
                         )
                     )
                 ]:
                     sample["landmarks"] = join(
-                        preprocessed_landmarks_path,
+                        preprocessed_dataset_path,
                         subject_id,
                         pose,
+                        "landmarks",
                         f"{frame_id}.npy",
                     )
                     assert exists(
                         sample["landmarks"]
                     ), f"{sample['landmarks']} does not exist"
                     sample["image"] = join(
-                        dataset_path,
+                        preprocessed_dataset_path,
                         subject_id,
                         pose,
+                        "images",
                         f"{frame_id}.jpg",
                     )
-                    assert exists(
-                        sample["image"]
-                    ), f"{sample['image']} does not exist"
+                    assert exists(sample["image"]), f"{sample['image']} does not exist"
                     samples.append(deepcopy(sample))
-        # splits = [s.split("_")[0] for s in listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0]))]
-        # poses = listdir(join(preprocessed_landmarks_path, "pose", subject_ids[0], f"{splits[0]}_pose"))
-        # frame_ids = [
-        #     filename.split("_")[0].zfill(3)
-        #     for filename in listdir(
-        #         join(
-        #             dataset_path,
-        #             "near-infrared",
-        #             subject_ids[0],
-        #             poses[0],
-        #         )
-        #     )
-        # ]
-        # for subject_id, pose in tqdm(
-        #     list(itertools.product(subject_ids, poses, frame_ids)),
-        #     desc=f"Parsing samples",
-        # ):
-        #     if hand == "Left_Hand" and images_needed == "right":
-        #         continue
-        #     elif hand == "Right_Hand" and images_needed == "left":
-        #         continue
-        #     # parses the sample
-        #     sample = {
-        #         "subject_id": subject_id,
-        #         "hand": hand,
-        #         "pose": pose,
-        #     }
-        #     if poses_dict is not None:
-        #         if pose not in poses_dict:
-        #             raise BaseException(
-        #                 f"Unrecognized pose '{pose}'. Poses are: {list(poses_dict.keys())}"
-        #             )
-        #         sample["label"] = poses_dict[pose]
-        #     for device in ["Horizontal", "Vertical"]:
-        #         # parses the landmarks
-        #         sample[f"landmarks_{device.lower()}"] = join(
-        #             preprocessed_landmarks_path,
-        #             subject_id,
-        #             hand,
-        #             pose,
-        #             device,
-        #             "landmarks",
-        #             f"{frame_id}.npy",
-        #         )
-        #         assert exists(
-        #             sample[f"landmarks_{device.lower()}"]
-        #         ), f"{sample[f'landmarks_{device.lower()}']} does not exist"
-        #         # parses the images
-        #         for direction in ["left", "right"]:
-        #             sample[f"image_{device.lower()}_{direction}"] = join(
-        #                 dataset_path,
-        #                 subject_id,
-        #                 hand,
-        #                 pose,
-        #                 device,
-        #                 "images",
-        #                 f"{frame_id}_{direction}.bmp",
-        #             )
-        #             assert exists(
-        #                 sample[f"image_{device.lower()}_{direction}"]
-        #             ), f"{sample[f'image_{device.lower()}_{direction}']} does not exist"
-        #     samples.append(sample)
         return samples
 
     def get_indices_per_subject(self) -> Dict[str, List[int]]:
@@ -440,7 +426,9 @@ class TinyHandGestureRecognitionDataset(Dataset):
         for key in sample:
             if key == "image":
                 # loads the image
-                outs["image"] = self.images_transforms(Image.open(sample[key]))
+                outs["image"] = T.ToTensor()(
+                    self.images_transforms(Image.open(sample[key]))
+                )
             elif key == "landmarks":
                 outs[key] = torch.from_numpy(
                     np.load(sample[key], allow_pickle=True)
@@ -453,8 +441,12 @@ if __name__ == "__main__":
     dataset = TinyHandGestureRecognitionDataset(
         dataset_path="../../datasets/tiny_hgr",
         normalize_landmarks=True,
+        img_size=224,
     )
-
+    # # plots the image
+    # import matplotlib.pyplot as plt
+    # plt.imshow(dataset[22123]["image"].permute(1, 2, 0).numpy())
+    # plt.show()
     # tests
     for (
         return_images,

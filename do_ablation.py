@@ -8,7 +8,7 @@ from os import listdir
 import yaml
 import generate_configs
 import train
-from model import BWHandGestureRecognitionModel
+from model import HandGestureRecognitionModel
 
 
 def main():
@@ -32,10 +32,10 @@ def main():
         line_args.image_backbone is not None or line_args.landmarks_backbone is not None
     ), "You must provide at least one of --image_backbone or --landmarks_backbone."
     _possible_image_backbones = (
-        BWHandGestureRecognitionModel._possible_image_backbones | {"all"}
+        HandGestureRecognitionModel._possible_image_backbones | {"all"}
     )
     _possible_landmarks_backbones = (
-        BWHandGestureRecognitionModel._possible_landmarks_backbones | {"all"}
+        HandGestureRecognitionModel._possible_landmarks_backbones | {"all"}
     )
     assert (
         line_args.image_backbone in _possible_image_backbones

@@ -4,7 +4,7 @@ from os.path import join
 import itertools
 import yaml
 
-from model import BWHandGestureRecognitionModel
+from model import HandGestureRecognitionModel
 
 
 def create_dict(
@@ -83,8 +83,8 @@ def main(
     # creates the ablation configurations
     makedirs(join(cfg_path, "ablation"), exist_ok=True)
     for image_backbone_name, landmarks_backbone_name in itertools.product(
-        BWHandGestureRecognitionModel._possible_image_backbones,
-        BWHandGestureRecognitionModel._possible_landmarks_backbones,
+        HandGestureRecognitionModel._possible_image_backbones,
+        HandGestureRecognitionModel._possible_landmarks_backbones,
     ):
         cfg = create_dict(
             dataset="ml2hp",

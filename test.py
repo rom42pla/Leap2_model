@@ -13,7 +13,7 @@ import yaml
 
 from datasets.ml2hp import HandPoseDataset
 
-from model import BWHandGestureRecognitionModel
+from model import HandGestureRecognitionModel
 from utils import (
     get_device_from_string,
     get_loso_runs,
@@ -89,7 +89,7 @@ if __name__ == "__main__":
             ][0],
         )
 
-        model = BWHandGestureRecognitionModel.load_from_checkpoint(checkpoint_path, map_location=device, strict=False) # ignore the error, it is just fine like this
+        model = HandGestureRecognitionModel.load_from_checkpoint(checkpoint_path, map_location=device, strict=False) # ignore the error, it is just fine like this
         for param in model.parameters():
             param.requires_grad = False
         # model.to(device)
