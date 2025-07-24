@@ -24,6 +24,7 @@ from model import HandGestureRecognitionModel
 from utils import (
     get_device_from_string,
     get_loso_runs,
+    get_optimistic_splits,
     get_train_test_splits,
     set_global_seed,
 )
@@ -104,8 +105,10 @@ def main(
     # sets up the validation scheme
     if cfg_dict["dataset"] == "ml2hp" or cfg_dict["validation"] == "loso":
         runs = get_loso_runs(dataset=dataset, limit_subjects=limit_subjects)
-    elif cfg_dict["dataset"] == "mmhgdhgr":
+    elif cfg_dict["dataset"] in {"mmhgdhgr"}:
         runs = get_train_test_splits(dataset=dataset, limit_subjects=limit_subjects)
+    elif cfg_dict["dataset"] in {"tiny_hgr"}:
+        runs = get_optimistic_splits(dataset=dataset)
     else:
         raise NotImplementedError()
 
@@ -174,6 +177,17 @@ def main(
             num_workers=num_workers,
             persistent_workers=True,
         )
+        if "test_idx" in run.keys():
+            dataloader_test = DataLoader(
+                dataset=Subset(dataset, indices=run["test_idx"]),  # type: ignore
+                batch_size=cfg_dict["batch_size"],
+                shuffle=False,
+                pin_memory=False,
+                num_workers=num_workers,
+                persistent_workers=True,
+            )
+        else:
+            dataloader_test = dataloader_val
 
         # initialize the model
         model.load_state_dict(
@@ -217,7 +231,7 @@ def main(
             map_location=device,
             strict=False,
         )
-        metrics = trainer.test(model, dataloader_val)
+        metrics = trainer.test(model, dataloader_test)
         with open(join(experiment_run_path, "metrics.yaml"), "w") as fp:
             yaml.dump(metrics, fp, default_flow_style=False)
         # eventually removes the checkpoint

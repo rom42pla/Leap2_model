@@ -107,7 +107,7 @@ def main():
     )
     line_args = parser.parse_args()
 
-    if line_args.dataset not in {"mmhgdhgr"} and line_args.validation == "simple":
+    if line_args.dataset not in {"mmhgdhgr", "tiny_hgr"} and line_args.validation == "simple":
         raise Exception(
             f"Validation scheme 'simple' is not supported for dataset {line_args.dataset}. "
             "Please use 'loso' instead."

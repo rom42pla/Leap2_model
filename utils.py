@@ -107,6 +107,32 @@ def get_train_test_splits(dataset, limit_subjects: int | None = None) -> List[Li
     runs = [run]
     return runs
 
+def get_optimistic_splits(dataset, limit_subjects: int | None = None) -> List[List[int]]:
+    subject_ids_to_use = sorted(dataset._get_subject_ids())
+    assert len(subject_ids_to_use) == 40, f"got {len(subject_ids_to_use)}: {subject_ids_to_use}"
+
+    # selects train, val and test subjects
+    subject_ids_train = set(subject_ids_to_use[:25])
+    subject_ids_val = set(subject_ids_to_use[25:30])
+
+    # builds the runs dict
+    run = {
+        "train_idx": [],
+        "val_idx": [],
+        "test_idx": [],
+    }
+    for i_sample, sample in enumerate(dataset.samples):
+        if sample["subject_id"] in subject_ids_train:
+            run["train_idx"].append(i_sample)
+        elif sample["subject_id"] in subject_ids_val:
+            run["val_idx"].append(i_sample)
+        else:
+            run["test_idx"].append(i_sample)
+    runs = [run]
+    return runs
+
+
+
     # for subject in indices_per_subject:
     #     runs.append(
     #         {

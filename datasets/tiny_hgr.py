@@ -418,7 +418,50 @@ class TinyHandGestureRecognitionDataset(Dataset):
 
     @staticmethod
     def _get_subject_ids() -> List[str]:
-        return sorted([f"user_{str(i).zfill(2)}" for i in range(1, 25 + 1)])
+        return sorted(
+            [
+                "alberto",
+                "federico",
+                "esther",
+                "cesar_2",
+                "jesus",
+                "lorena",
+                "dani_2",
+                "marta",
+                "carlos_ca",
+                "rafa",
+                "arturo",
+                "cesar",
+                "mateo",
+                "carlos_c",
+                "carmen",
+                "alfredo",
+                "aishwary",
+                "ana",
+                "tomas",
+                "cristina",
+                "carlos_r",
+                "lara",
+                "vir",
+                "dani",
+                "raquel",
+                "susana",
+                "tomas_2",
+                "javier",
+                "marie",
+                "richard",
+                "pablo",
+                "carlos_c_2",
+                "fili",
+                "ana_m",
+                "pablo_2",
+                "susana_2",
+                "raul",
+                "samira",
+                "sergio",
+                "jose_luis",
+            ]
+        )
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
