@@ -31,7 +31,7 @@ class TinyHandGestureRecognitionDataset(Dataset):
         img_size=1080,
         normalize_landmarks=True,
     ):
-        assert isdir(dataset_path)
+        # assert isdir(dataset_path)
         self.dataset_path = dataset_path
         self.normalize_landmarks = normalize_landmarks
 

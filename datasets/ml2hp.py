@@ -33,7 +33,7 @@ class MotionLeap2Dataset(Dataset):
         img_size=224,
         normalize_landmarks=True,
     ):
-        assert isdir(dataset_path)
+        # assert isdir(dataset_path)
         self.dataset_path = dataset_path
         assert images_needed in self._possible_images_needed
         self.images_needed = images_needed

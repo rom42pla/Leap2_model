@@ -1,14 +1,14 @@
 # Leap2_dataloader
 Repository to efficiently load Leap2 data. The entire pipeline is meant to process the data using Pytorch dataloaders.
 
-## TL;DR
+<!-- ## TL;DR
 
 ```
 conda activate ml2hp
 python generate_configs.py
 python train.py --cfg=cfgs/ml2hp_loso.yaml
 python test.py --cfg=cfgs/ml2hp_loso.yaml --checkpoints_path=checkpoints/20250522_1234_ml2hp_loso
-```
+``` -->
 
 ## Pre-processing
 
@@ -35,51 +35,23 @@ pip install -r requirements.txt
 
 ### Datasets
 
-Make sure to put the `ml2hp` dataset into `../../datasets`:
+Make sure to put the `_mmhgdhgr_preprocessed_landmarks`,  `_tiny_hgr_preprocessed_landmarks`, and  `_ml2hp_preprocessed_landmarks` into this folder, if you have it.
+If you need to generate those preprocessed landmarks, you have to put the `ml2hp` and `tiny_hgr` folders into `../../datasets`.
 
-```
-|-- datasets
-|   `-- ml2hp
-|       |-- 001
-|       |-- 002
-|       |-- 003
-|       |-- 004
-|       |-- 005
-|       |-- 006
-|       |-- 007
-|       |-- 008
-|       |-- 009
-|       |-- 010
-|       |-- 011
-|       |-- 012
-|       |-- 013
-|       |-- 014
-|       |-- 015
-|       |-- 016
-|       |-- 017
-|       |-- 018
-|       |-- 019
-|       |-- 020
-|       |-- 021
-|       |-- hand_properties_horizontal_cleaned.csv
-|       |-- hand_properties_vertical_cleaned.csv
-|       |-- Readme.txt
-|       `-- subjects_info.csv
-|-- repos
-|   |-- Leap2_model
-|   |   |-- cfgs
-|   |   |-- checkpoints
-|   |   |-- datasets
-|   |   |-- generate_configs.py
-|   |   |-- _initial_state_dict.pth
-|   |   |-- ml2hp
-|   |   |-- model.py
-|   |   |-- plots.py
-|   |   |-- _preprocessed_landmarks
-|   |   |-- __pycache__
-|   |   |-- README.md
-|   |   |-- requirements.txt
-|   |   |-- train.py
-|   |   |-- utils.py
-|   |   `-- wandb
+Make also sure to put the `mmhgdhgr` dataset into `../../datasets`.
+
+You can [download the preprocessed datasets from here](https://drive.google.com/drive/folders/1FuDFZ6jN_PLjUluN3ogTgVV_AunZ7vgF?usp=drive_link), and [the datasets from here](https://drive.google.com/drive/folders/1rUuR0Dhluwjc3jyPczjkVFUSK0lwKwAq?usp=drive_link).
+
+### Checkpoints
+
+Make sure to create a directory like `./checkpoints` and put the `_mmhgdhgr_results`,  `_tiny_hgr_results` there.
+
+You can [download the checkpoints from here](https://drive.google.com/drive/folders/1JfO-QBPXbrRFR1PmQMi8XbOWKkjswDCi?usp=drive_link).
+
+## Run a test
+
+You can use the `do_validation.py` script, passing the path of the checkpoint folder that you want to test. For example:
+
+```bash
+python do_validation.py checkpoints/tiny_hgr_results/tiny_hgr_simple_convnextv2-t_mlp_h-images_h-landmarks-20250724-1426/
 ```
