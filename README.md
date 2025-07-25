@@ -1,14 +1,5 @@
-# Leap2_dataloader
-Repository to efficiently load Leap2 data. The entire pipeline is meant to process the data using Pytorch dataloaders.
-
-<!-- ## TL;DR
-
-```
-conda activate ml2hp
-python generate_configs.py
-python train.py --cfg=cfgs/ml2hp_loso.yaml
-python test.py --cfg=cfgs/ml2hp_loso.yaml --checkpoints_path=checkpoints/20250522_1234_ml2hp_loso
-``` -->
+# Hand Gesture Recognition
+Repository for the paper [xyz](), published at [xyz]().
 
 ## Pre-processing
 
