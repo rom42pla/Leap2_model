@@ -161,7 +161,7 @@ def main():
                 persistent_workers=True,
             )
             print(f"testing on the TEST dataloader")
-        trainer.test(model=model, dataloaders=dataloader_test)
+            trainer.test(model=model, dataloaders=dataloader_test)
 
 if __name__ == "__main__":
     main()
